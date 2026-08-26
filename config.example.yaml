@@ -1,0 +1,17 @@
+# TVGuard 配置。复制为 config.yaml 后修改。
+
+tv:
+  adb_path: adb            # adb 可执行文件路径（需安装 Android platform-tools）
+  adb_host: 192.168.1.100  # 雷鸟电视的 IP：设置→关于→网络状态 里查看
+  poll_interval: 5         # 轮询前台应用的间隔（秒），越小拦截越快、越实时
+
+server:
+  host: 0.0.0.0            # 面板监听地址，0.0.0.0 = 局域网内手机可访问
+  port: 8787
+  password: ""             # 访问密码，建议设置，防止小孩在局域网内打开面板自己加时
+
+# 每日额度重置时间。默认 0 点；改成 "04:00" 可避免熬夜到 0 点后额度刷新
+reset_time: "00:00"
+
+# 应用管控规则不在此文件配置——启动后在 Web 面板里添加和修改，
+# 持久化在 data/rules.json。

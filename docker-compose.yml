@@ -1,0 +1,17 @@
+services:
+  tvguard:
+    build: .
+    container_name: tvguard
+    restart: unless-stopped
+    # host 网络模式在 Linux NAS/树莓派上最省事（直连局域网设备）。
+    # 不支持 host 网络的环境删掉这行，改用端口映射：
+    #   ports: ["8787:8787"]
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+      # 持久化 adb 密钥，避免容器重建后电视重新弹 RSA 授权框
+      - adbkeys:/root/.android
+
+volumes:
+  adbkeys:

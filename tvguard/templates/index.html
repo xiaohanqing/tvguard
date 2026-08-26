@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TVGuard · 电视时间管家</title>
+<style>
+  :root {
+    --bg: #10141c; --card: #1a2130; --line: #2a3348;
+    --text: #e8ecf4; --dim: #8a94a8; --accent: #4f8cff; --ok: #3fbf6f;
+    --warn: #f0a13c; --bad: #e05c5c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: var(--bg); color: var(--text); padding: 16px; max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--dim); font-size: 13px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          padding: 14px 16px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--bad); }
+  .muted { color: var(--dim); font-size: 13px; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+           padding: 7px 14px; font-size: 14px; cursor: pointer; }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  button.small { padding: 4px 10px; font-size: 12px; }
+  button.danger { background: transparent; border: 1px solid var(--bad); color: var(--bad); }
+  button:disabled { opacity: .4; cursor: default; }
+  input, select { background: #0d1119; border: 1px solid var(--line); color: var(--text);
+           border-radius: 8px; padding: 7px 10px; font-size: 14px; }
+  input[type=time] { width: 110px; }
+  .bar { height: 8px; background: #0d1119; border-radius: 4px; overflow: hidden; margin: 8px 0 4px; }
+  .bar > div { height: 100%; background: var(--accent); border-radius: 4px; }
+  .bar > div.over { background: var(--bad); }
+  .app-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+  .app-name { font-size: 16px; font-weight: 600; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--dim); }
+  .tag.live { color: var(--ok); border-color: var(--ok); }
+  .tag.blocked { color: var(--bad); border-color: var(--bad); }
+  .sched { font-size: 12px; color: var(--dim); margin-top: 6px; line-height: 1.7; }
+  .events { font-size: 13px; line-height: 1.9; color: var(--dim); }
+  .events b { color: var(--text); font-weight: 500; }
+  .wd { display: inline-flex; gap: 4px; }
+  .wd label { display: inline-flex; align-items: center; gap: 2px; font-size: 12px;
+              color: var(--dim); border: 1px solid var(--line); border-radius: 6px;
+              padding: 2px 6px; cursor: pointer; }
+  .wd input { display: none; }
+  .wd label.checked { color: var(--accent); border-color: var(--accent); }
+  #form { display: none; }
+  .field { margin-bottom: 10px; }
+  .field label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 4px; }
+  .field input { width: 100%; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+           background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+           padding: 10px 18px; font-size: 14px; display: none; }
+</style>
+</head>
+<body>
+<h1>电视时间管家</h1>
+<div class="sub" id="clock">加载中…</div>
+
+<div class="card">
+  <div class="row" style="justify-content: space-between;">
+    <div class="row">
+      <span class="dot off" id="conn-dot"></span>
+      <span id="conn-text">电视未连接</span>
+      <span class="muted" id="fg-text"></span>
+    </div>
+    <div class="row" id="pause-ctl">
+      <button class="ghost small" onclick="pause(15)">暂停15分</button>
+      <button class="ghost small" onclick="pause(60)">暂停1小时</button>
+      <button class="ghost small" onclick="resume()">恢复控制</button>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="add-entry">
+  <div class="row" style="justify-content: space-between;">
+    <span>管控应用</span>
+    <button class="small" onclick="showForm(null)">＋ 添加应用</button>
+  </div>
+</div>
+
+<!-- 添加/编辑应用 -->
+<div class="card" id="form">
+  <div class="field">
+    <label>应用包名（打开电视上的应用后，此处可一键填入当前包名）</label>
+    <div class="row">
+      <input id="f-package" placeholder="如 com.ktcp.video" style="flex:1;">
+      <button class="ghost small" id="f-fill">填入当前播放的</button>
+    </div>
+  </div>
+  <div class="field"><label>显示名称</label><input id="f-name" placeholder="如 云视听极光"></div>
+  <div class="field"><label>每日可用时长（分钟，0 = 不限时长、仅限时段）</label>
+    <input id="f-limit" type="number" min="0" value="60"></div>
+  <div class="field">
+    <label>允许时段（不添加 = 全天允许，仅受每日时长限制）</label>
+    <div id="f-schedules"></div>
+    <button class="ghost small" style="margin-top:6px;" onclick="addSchedRow()">＋ 添加时段</button>
+  </div>
+  <div class="row" style="justify-content:flex-end;">
+    <button class="ghost" onclick="hideForm()">取消</button>
+    <button onclick="saveApp()">保存</button>
+  </div>
+</div>
+
+<div id="apps"></div>
+
+<div class="card">
+  <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+    <span>最近事件</span>
+    <button class="ghost small" onclick="loadPackages()">查看电视已装应用</button>
+  </div>
+  <div class="events" id="events">—</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const WD = [["mon","一"],["tue","二"],["wed","三"],["thu","四"],["fri","五"],["sat","六"],["sun","日"]];
+let editing = null;
+let token = localStorage.getItem("tvguard_token") || "";
+
+function api(path, opts = {}) {
+  opts.headers = Object.assign(opts.headers || {}, {"Content-Type": "application/json", "X-Auth-Token": token});
+  return fetch(path, opts).then(r => {
+    if (r.status === 401) {
+      const p = prompt("请输入访问密码：");
+      if (p !== null) { token = p; localStorage.setItem("tvguard_token", p); return api(path, opts); }
+      throw new Error("未授权");
+    }
+    return r.json();
+  });
+}
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 2500);
+}
+
+function fmtSched(s) {
+  const days = "周" + s.days.map(d => WD.find(w => w[0] === d)[1]).join("");
+  return `${days} ${s.start}-${s.end}`;
+}
+
+async function refresh() {
+  let st;
+  try { st = await api("/api/status"); } catch { return; }
+  document.getElementById("clock").textContent =
+    `${st.now} · 今日额度于每日重置`;
+
+  const dot = document.getElementById("conn-dot");
+  dot.className = "dot " + (st.connected ? "on" : "off");
+  document.getElementById("conn-text").textContent =
+    st.connected ? "电视已连接" : "电视未连接";
+  let fg = "（待机或桌面）";
+  if (st.foreground) {
+    const app = st.apps.find(a => a.package === st.foreground);
+    fg = st.foreground_controlled
+      ? `正在看：${app ? app.name : st.foreground}`
+      : `正在看：${st.foreground}（未管控）`;
+  }
+  document.getElementById("fg-text").textContent = fg;
+  document.getElementById("pause-ctl").style.opacity = st.paused ? 1 : 0.6;
+
+  renderApps(st);
+  document.getElementById("events").innerHTML = st.events.length
+    ? st.events.map(e => `<div>${e.time} · <b>${e.message}</b></div>`).join("")
+    : "—";
+}
+
+function renderApps(st) {
+  const el = document.getElementById("apps");
+  if (!st.apps.length) {
+    el.innerHTML = `<div class="card muted">还没有管控任何应用。在电视上打开小孩常用的 App，然后点「＋ 添加应用」。</div>`;
+    return;
+  }
+  el.innerHTML = st.apps.map(a => {
+    const pct = a.limit_minutes > 0
+      ? Math.min(100, a.usage_minutes / (a.limit_minutes + a.bonus_minutes) * 100) : 0;
+    const over = a.limit_minutes > 0 && a.remaining_minutes <= 0;
+    const sched = a.schedules.length
+      ? a.schedules.map(fmtSched).join("　") : "全天允许";
+    let tag = "";
+    if (a.is_foreground) tag += `<span class="tag live">正在看</span> `;
+    if (!a.in_schedule) tag += `<span class="tag blocked">时段外</span> `;
+    else if (over) tag += `<span class="tag blocked">已超时</span> `;
+    const remain = a.limit_minutes > 0
+      ? `剩余 ${a.remaining_minutes} 分钟` : "不限时长";
+    return `<div class="card">
+      <div class="app-head">
+        <span class="app-name">${a.name} ${tag}</span>
+        <span class="muted">今日 ${a.usage_minutes} 分钟 · ${remain}${a.bonus_minutes ? ` · 已加时 ${a.bonus_minutes} 分` : ""}</span>
+      </div>
+      ${a.limit_minutes > 0 ? `<div class="bar"><div class="${over ? "over" : ""}" style="width:${pct}%"></div></div>` : ""}
+      <div class="sched">限额 ${a.limit_minutes} 分钟/天 · ${sched}</div>
+      <div class="row" style="justify-content:flex-end; margin-top:8px;">
+        <button class="ghost small" onclick="bonus('${a.package}', 15)">+15分</button>
+        <button class="ghost small" onclick="bonus('${a.package}', 30)">+30分</button>
+        <button class="ghost small" onclick='showForm(${JSON.stringify(a)})'>编辑</button>
+        <button class="danger small" onclick="delApp('${a.package}')">移除</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function pause(min) {
+  await api("/api/pause", {method: "POST", body: JSON.stringify({minutes: min})});
+  toast(`已暂停控制 ${min} 分钟`); refresh();
+}
+async function resume() {
+  await api("/api/resume", {method: "POST"}); toast("已恢复控制"); refresh();
+}
+async function bonus(pkg, min) {
+  await api("/api/bonus", {method: "POST", body: JSON.stringify({package: pkg, minutes: min})});
+  toast(`已加时 ${min} 分钟`); refresh();
+}
+async function delApp(pkg) {
+  if (!confirm("确定移除对该应用的管控？")) return;
+  await api("/api/apps/delete", {method: "POST", body: JSON.stringify({package: pkg})});
+  toast("已移除"); refresh();
+}
+
+// ---------- 表单 ----------
+function showForm(app) {
+  editing = app;
+  document.getElementById("form").style.display = "block";
+  document.getElementById("f-package").value = app ? app.package : "";
+  document.getElementById("f-package").disabled = !!app;
+  document.getElementById("f-name").value = app ? app.name : "";
+  document.getElementById("f-limit").value = app ? app.limit_minutes : 60;
+  const box = document.getElementById("f-schedules");
+  box.innerHTML = "";
+  (app ? app.schedules : []).forEach(s => addSchedRow(s));
+  document.getElementById("form").scrollIntoView({behavior: "smooth"});
+}
+function hideForm() {
+  editing = null;
+  document.getElementById("form").style.display = "none";
+}
+function addSchedRow(s) {
+  s = s || {days: ["mon","tue","wed","thu","fri"], start: "18:30", end: "20:00"};
+  const div = document.createElement("div");
+  div.className = "row";
+  div.style.marginBottom = "6px";
+  const wd = WD.map(([v, l]) =>
+    `<label class="${s.days.includes(v) ? "checked" : ""}">
+       <input type="checkbox" value="${v}" ${s.days.includes(v) ? "checked" : ""}>${l}</label>`).join("");
+  div.innerHTML = `<span class="wd">${wd}</span>
+    <input type="time" value="${s.start}"> — <input type="time" value="${s.end}">
+    <button class="danger small" onclick="this.parentNode.remove()">删</button>`;
+  div.querySelectorAll("input[type=checkbox]").forEach(cb =>
+    cb.addEventListener("change", () => cb.parentNode.classList.toggle("checked", cb.checked)));
+  document.getElementById("f-schedules").appendChild(div);
+}
+async function saveApp() {
+  const schedules = [...document.querySelectorAll("#f-schedules > .row")].map(row => ({
+    days: [...row.querySelectorAll("input[type=checkbox]:checked")].map(cb => cb.value),
+    start: row.querySelectorAll("input[type=time]")[0].value,
+    end: row.querySelectorAll("input[type=time]")[1].value,
+  })).filter(s => s.days.length && s.start && s.end);
+  const body = {
+    package: document.getElementById("f-package").value.trim(),
+    name: document.getElementById("f-name").value.trim(),
+    daily_limit_minutes: parseInt(document.getElementById("f-limit").value) || 0,
+    schedules,
+  };
+  if (!body.package) { toast("请填写包名"); return; }
+  const r = await api("/api/apps", {method: "POST", body: JSON.stringify(body)});
+  if (r.error) { toast(r.error); return; }
+  toast("已保存"); hideForm(); refresh();
+}
+document.getElementById("f-fill").onclick = async () => {
+  const r = await api("/api/foreground");
+  if (r.package) {
+    document.getElementById("f-package").value = r.package;
+    if (r.controlled) toast(`「${r.name}」已在管控中，将编辑其规则`);
+  } else toast("当前识别不到前台应用（电视可能在待机或桌面）");
+};
+async function loadPackages() {
+  const r = await api("/api/packages");
+  if (r.error) { toast(r.error); return; }
+  const pkg = prompt("电视上已安装的第三方应用（可复制包名）：\n\n" + r.packages.join("\n"));
+  if (pkg) document.getElementById("f-package").value = pkg.trim();
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
