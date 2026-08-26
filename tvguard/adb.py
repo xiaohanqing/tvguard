@@ -11,6 +11,31 @@ import subprocess
 # 形如 "mCurrentFocus=Window{... u0 com.pkg/com.pkg.MainActivity}"
 _FOCUS_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)/[a-zA-Z0-9_.$]+")
 
+# 常见电视应用包名 → 中文名（电视 App 多数无法通过 shell 拿到显示名，
+# 用字典兜底；用户添加规则时填的名称也会被记住，见 store 的规则）。
+KNOWN_APPS = {
+    # 国内视频 TV 版
+    "com.ktcp.video": "云视听极光（腾讯视频TV）",
+    "com.gitv.dolphin": "银河奇异果（爱奇艺TV）",
+    "com.gitv.dolphin.weishi": "银河奇异果（爱奇艺TV）",
+    "com.hunantv.tv": "芒果TV（电视版）",
+    "com.xiaodianshi.tv": "哔哩哔哩TV版",
+    "com.dangbei.tvmarket": "当贝市场",
+    # 雷鸟/TCL 系统应用（电视预装，非第三方，也在选择范围）
+    "com.tcl.ffeducation": "雷鸟教育课堂",
+    "com.tcl.article.news": "新闻头条",
+    "com.tcl.tvoledgallery": "艺术画廊",
+    # 海外流媒体（Android TV）
+    "com.netflix.ninja": "Netflix",
+    "com.google.android.youtube.tv": "YouTube",
+    "com.disney.disneyplus": "Disney+",
+    "com.amazon.amazonvideo.livingroom": "Prime Video",
+}
+
+
+def label_for(pkg: str) -> str:
+    return KNOWN_APPS.get(pkg, "")
+
 
 class AdbError(Exception):
     pass
@@ -110,6 +135,32 @@ class Adb:
             if line.startswith("package:"):
                 pkgs.append(line[len("package:"):])
         return sorted(pkgs)
+
+    def list_apps(self):
+        """返回电视上全部应用（含预装的常见视频应用），
+        带已知中文名（KNOWN_APPS 字典），供面板选择。"""
+        try:
+            third = set(self.list_packages(third_party_only=True))
+        except AdbError:
+            third = set()
+        try:
+            all_pkgs = self.list_packages(third_party_only=False)
+        except AdbError:
+            all_pkgs = sorted(third)
+
+        apps = []
+        for pkg in all_pkgs:
+            name = KNOWN_APPS.get(pkg)
+            if name or pkg in third:
+                apps.append({
+                    "package": pkg,
+                    "name": name or "",
+                    "third_party": pkg in third,
+                })
+        # 有名字的排前面，其余按包名字母序
+        apps.sort(key=lambda a: (a["name"] == "", a["package"]))
+        return apps
+
 
     # ---------- 控制 ----------
 

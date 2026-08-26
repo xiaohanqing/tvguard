@@ -54,6 +54,24 @@
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
            background: var(--card); border: 1px solid var(--line); border-radius: 8px;
            padding: 10px 18px; font-size: 14px; display: none; }
+  .mask { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none;
+          align-items: center; justify-content: center; z-index: 10; }
+  .picker { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+            width: min(92vw, 480px); max-height: 80vh; display: flex; flex-direction: column; }
+  .picker header { padding: 14px 16px 10px; }
+  .picker header .row { justify-content: space-between; margin-bottom: 10px; }
+  .picker input { width: 100%; }
+  .picker-list { overflow-y: auto; padding: 0 8px 10px; flex: 1; }
+  .app-item { display: flex; justify-content: space-between; align-items: center;
+              gap: 8px; padding: 10px 8px; border-bottom: 1px solid var(--line);
+              cursor: pointer; border-radius: 6px; }
+  .app-item:hover { background: #232c40; }
+  .app-item:last-child { border-bottom: 0; }
+  .app-item .n { font-size: 14px; }
+  .app-item .p { font-size: 11px; color: var(--dim); word-break: break-all; }
+  .app-item .tag { flex-shrink: 0; }
+  .app-item.controlled { opacity: .45; cursor: default; }
+  .app-item.controlled:hover { background: transparent; }
 </style>
 </head>
 <body>
@@ -78,17 +96,25 @@
 <div class="card" id="add-entry">
   <div class="row" style="justify-content: space-between;">
     <span>管控应用</span>
-    <button class="small" onclick="showForm(null)">＋ 添加应用</button>
+    <button class="small" onclick="openPicker()">＋ 从电视上选择应用</button>
+  </div>
+</div>
+
+<!-- 检测到正在看但未管控的应用 -->
+<div class="card" id="suggest" style="display:none; border-color: var(--warn);">
+  <div class="row" style="justify-content: space-between;">
+    <span id="suggest-text" style="font-size:14px;"></span>
+    <button class="small" onclick="quickAddForeground()">管控它</button>
   </div>
 </div>
 
 <!-- 添加/编辑应用 -->
 <div class="card" id="form">
   <div class="field">
-    <label>应用包名（打开电视上的应用后，此处可一键填入当前包名）</label>
+    <label>应用</label>
     <div class="row">
-      <input id="f-package" placeholder="如 com.ktcp.video" style="flex:1;">
-      <button class="ghost small" id="f-fill">填入当前播放的</button>
+      <input id="f-package" placeholder="点右边按钮从电视上选择" style="flex:1;" readonly>
+      <button class="ghost small" onclick="openPicker('f-package')">选择应用</button>
     </div>
   </div>
   <div class="field"><label>显示名称</label><input id="f-name" placeholder="如 云视听极光"></div>
@@ -110,12 +136,26 @@
 <div class="card">
   <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
     <span>最近事件</span>
-    <button class="ghost small" onclick="loadPackages()">查看电视已装应用</button>
+    <button class="ghost small" onclick="openPicker()">浏览电视应用</button>
   </div>
   <div class="events" id="events">—</div>
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- 应用选择弹窗 -->
+<div class="mask" id="picker-mask" onclick="if(event.target===this)closePicker()">
+  <div class="picker">
+    <header>
+      <div class="row">
+        <b>选择电视上的应用</b>
+        <button class="ghost small" onclick="closePicker()">关闭</button>
+      </div>
+      <input id="picker-search" placeholder="搜索名称或包名…" oninput="renderPickerList()">
+    </header>
+    <div class="picker-list" id="picker-list">加载中…</div>
+  </div>
+</div>
 
 <script>
 const WD = [["mon","一"],["tue","二"],["wed","三"],["thu","四"],["fri","五"],["sat","六"],["sun","日"]];
@@ -164,6 +204,17 @@ async function refresh() {
   }
   document.getElementById("fg-text").textContent = fg;
   document.getElementById("pause-ctl").style.opacity = st.paused ? 1 : 0.6;
+
+  // 正在看的应用未受管控时，给出一键添加提示
+  const sug = document.getElementById("suggest");
+  if (st.connected && st.foreground && !st.foreground_controlled) {
+    const app = (pickerApps || []).find(a => a.package === st.foreground);
+    const name = app && app.name ? app.name : st.foreground;
+    document.getElementById("suggest-text").textContent = `检测到正在看「${name}」，尚未管控`;
+    sug.style.display = "block";
+  } else {
+    sug.style.display = "none";
+  }
 
   renderApps(st);
   document.getElementById("events").innerHTML = st.events.length
@@ -272,18 +323,68 @@ async function saveApp() {
   if (r.error) { toast(r.error); return; }
   toast("已保存"); hideForm(); refresh();
 }
-document.getElementById("f-fill").onclick = async () => {
+
+// ---------- 应用选择器 ----------
+let pickerApps = [];
+let pickerTarget = null;   // 选择后回填的输入框 id（null = 直接新增规则）
+
+async function openPicker(target) {
+  pickerTarget = target || null;
+  document.getElementById("picker-mask").style.display = "flex";
+  const box = document.getElementById("picker-list");
+  const search = document.getElementById("picker-search");
+  if (!pickerApps.length) {
+    box.innerHTML = "正在读取电视上的应用…";
+    const r = await api("/api/packages");
+    if (r.error) { box.innerHTML = `<div class="muted" style="padding:12px;">读取失败：${r.error}</div>`; return; }
+    pickerApps = r.apps;
+  }
+  search.value = "";
+  renderPickerList();
+  search.focus();
+}
+function closePicker() {
+  document.getElementById("picker-mask").style.display = "none";
+}
+function renderPickerList() {
+  const q = document.getElementById("picker-search").value.trim().toLowerCase();
+  const list = pickerApps.filter(a =>
+    !q || a.name.toLowerCase().includes(q) || a.package.toLowerCase().includes(q));
+  const el = document.getElementById("picker-list");
+  if (!list.length) { el.innerHTML = `<div class="muted" style="padding:12px;">没有匹配的应用</div>`; return; }
+  el.innerHTML = list.map(a => {
+    const right = a.controlled
+      ? `<span class="tag">已管控</span>`
+      : (a.third_party ? "" : `<span class="tag">预装</span>`);
+    return `<div class="app-item ${a.controlled ? "controlled" : ""}"
+                 onclick='pickApp(${JSON.stringify(a)})'>
+      <div><div class="n">${a.name || a.package}</div>
+           <div class="p">${a.package}</div></div>${right}</div>`;
+  }).join("");
+}
+function pickApp(a) {
+  if (a.controlled) return;
+  closePicker();
+  if (pickerTarget) {
+    // 编辑表单回填模式
+    document.getElementById(pickerTarget).value = a.package;
+    if (!document.getElementById("f-name").value) document.getElementById("f-name").value = a.name || "";
+  } else {
+    showForm(null);
+    document.getElementById("f-package").value = a.package;
+    document.getElementById("f-name").value = a.name || "";
+  }
+  document.getElementById("form").scrollIntoView({behavior: "smooth"});
+}
+
+// ---------- 未管控应用提示 ----------
+async function quickAddForeground() {
+  showForm(null);
+  document.getElementById("f-package").value = "";
   const r = await api("/api/foreground");
-  if (r.package) {
-    document.getElementById("f-package").value = r.package;
-    if (r.controlled) toast(`「${r.name}」已在管控中，将编辑其规则`);
-  } else toast("当前识别不到前台应用（电视可能在待机或桌面）");
-};
-async function loadPackages() {
-  const r = await api("/api/packages");
-  if (r.error) { toast(r.error); return; }
-  const pkg = prompt("电视上已安装的第三方应用（可复制包名）：\n\n" + r.packages.join("\n"));
-  if (pkg) document.getElementById("f-package").value = pkg.trim();
+  document.getElementById("f-package").value = r.package || "";
+  document.getElementById("f-name").value = r.name || "";
+  document.getElementById("form").scrollIntoView({behavior: "smooth"});
 }
 
 refresh();

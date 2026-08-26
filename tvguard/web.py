@@ -4,6 +4,8 @@ from datetime import datetime
 
 from flask import Flask, jsonify, render_template, request
 
+from .adb import label_for
+
 WEEKDAY_LABELS = {
     "mon": "一", "tue": "二", "wed": "三", "thu": "四",
     "fri": "五", "sat": "六", "sun": "日",
@@ -134,21 +136,33 @@ def create_app(cfg: dict, store, adb) -> Flask:
     def api_foreground():
         fg = store.foreground
         rule = store.get_rule(fg) if fg else None
+        if rule:
+            name = rule.get("name")
+        else:
+            name = label_for(fg) if fg else None
         return jsonify({
             "package": fg,
             "activity_raw": "",
             "controlled": rule is not None,
-            "name": rule.get("name") if rule else None,
+            "name": name,
         })
 
     @app.route("/api/packages")
     @auth_required
     def api_packages():
         try:
-            pkgs = adb.list_packages(third_party_only=True)
+            apps = adb.list_apps()
         except Exception as e:
             return jsonify({"error": f"获取失败: {e}"}), 502
-        return jsonify({"packages": pkgs})
+        # 已有规则的应用补上家长起的名字
+        for a in apps:
+            rule = store.get_rule(a["package"])
+            if rule:
+                a["name"] = rule.get("name") or a["name"]
+                a["controlled"] = True
+            else:
+                a["controlled"] = False
+        return jsonify({"apps": apps})
 
     @app.errorhandler(404)
     def not_found(_):
