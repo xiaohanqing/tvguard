@@ -4,6 +4,8 @@ import threading
 import time
 from datetime import datetime
 
+from .adb import AdbError
+
 log = logging.getLogger("tvguard.monitor")
 
 
@@ -16,7 +18,16 @@ class Monitor(threading.Thread):
         self._stop_event = threading.Event()
         self._last_tick = time.time()
         self._last_block_log = {}   # package -> 上次记录拦截事件的时间戳
+        self._last_err_log = {}     # key -> 上次记录错误事件的时间戳
         self._last_conn_state = None
+
+    def _log_recurring(self, key: str, message: str):
+        """同一错误 10 分钟内只记一条，避免刷屏。"""
+        now = time.time()
+        if now - self._last_err_log.get(key, 0) > 600:
+            self._last_err_log[key] = now
+            self.store.log_event("error", message)
+            log.error("%s", message)
 
     def stop(self):
         self._stop_event.set()
@@ -37,12 +48,19 @@ class Monitor(threading.Thread):
         elapsed = min(now - self._last_tick, self.poll_interval * 3)
         self._last_tick = now
 
+        adb_error = False
         try:
             connected = self.adb.ensure_connected()
+        except AdbError as e:
+            connected = False
+            adb_error = True
+            self._log_recurring("adberr", f"adb 运行异常：{e}")
         except Exception:
             connected = False
+            adb_error = True
+            log.exception("连接检查异常")
         self.store.connected = connected
-        if connected != self._last_conn_state:
+        if not adb_error and connected != self._last_conn_state:
             self.store.log_event(
                 "conn" if connected else "disconn",
                 "已连接电视" if connected else f"电视连接断开（{self.adb.host}）")
