@@ -12,13 +12,14 @@ RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements.txt
 
 COPY . .
 
-# platform-tools：优先用项目目录里预下载的 zip（国内网络直连 Google 可能失败），
-# 没有再在线下载。解压后显式加执行位并自验 adb 可运行。
+# platform-tools：优先用项目目录里预下载的 zip，其次 Google 官方源，再试华为镜像源。
+# 解压后显式加执行位并自验 adb 可运行。
 RUN set -e; \
     if [ -f platform-tools-latest-linux.zip ]; then ZIP=platform-tools-latest-linux.zip; \
     elif [ -f pt.zip ]; then ZIP=pt.zip; \
-    else curl -fsSLo pt.zip https://dl.google.com/android/repository/platform-tools-latest-linux.zip && ZIP=pt.zip; \
-    fi; \
+    elif curl -fsSLo pt.zip https://dl.google.com/android/repository/platform-tools-latest-linux.zip; then ZIP=pt.zip; \
+    elif curl -fsSLo pt.zip https://mirrors.huaweicloud.com/android/repository/platform-tools-latest-linux.zip; then ZIP=pt.zip; \
+    else echo "!! 无法下载 platform-tools：请手动下载 platform-tools-latest-linux.zip 放到项目目录后重新构建"; exit 1; fi; \
     unzip -q "$ZIP" -d /opt && rm -f "$ZIP"; \
     chmod +x /opt/platform-tools/adb; \
     /opt/platform-tools/adb version
