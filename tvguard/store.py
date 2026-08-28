@@ -212,6 +212,7 @@ class Store:
     def _normalize_rule(self, rule: dict):
         rule.setdefault("name", rule["package"])
         rule["daily_limit_minutes"] = max(0, int(rule.get("daily_limit_minutes", 0) or 0))
+        rule["banned"] = bool(rule.get("banned", False))
         wins = []
         for w in rule.get("windows") or []:
             days = [d for d in (w.get("days") or []) if d in WEEKDAYS]

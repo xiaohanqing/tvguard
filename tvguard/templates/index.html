@@ -307,8 +307,11 @@ function renderApps(st) {
   }
   el.innerHTML = st.apps.map(a => {
     let tag = "";
-    if (a.is_foreground) tag += `<span class="tag live">正在看</span> `;
-    if (!a.no_windows && !a.in_window) tag += `<span class="tag blocked">时段外</span> `;
+    if (a.banned) tag += `<span class="tag blocked">已禁止使用</span> `;
+    else {
+      if (a.is_foreground) tag += `<span class="tag live">正在看</span> `;
+      if (!a.no_windows && !a.in_window) tag += `<span class="tag blocked">时段外</span> `;
+    }
 
     // 每日总上限行
     let totalHtml = "";
@@ -347,10 +350,25 @@ function renderApps(st) {
       ? winHtml
       : `<div class="sched">全天允许（未设置时段）</div>`;
 
+    // 被禁止的应用：整卡置灰，只留解除按钮
+    if (a.banned) {
+      return `<div class="card" style="opacity:.55;">
+        <div class="app-head">
+          <span class="app-name">${a.name} ${tag}</span>
+          <span class="row">
+            <button class="small" onclick="banApp('${a.package}', false)">解除禁止</button>
+            <button class="danger small" onclick="delApp('${a.package}')">移除</button>
+          </span>
+        </div>
+        <div class="sched">此应用已被禁止使用（不分时段，无法打开）</div>
+      </div>`;
+    }
+
     return `<div class="card">
       <div class="app-head">
         <span class="app-name">${a.name} ${tag}</span>
         <span class="row">
+          <button class="danger small" onclick="banApp('${a.package}', true)" title="不分时段，永久禁止打开">禁止使用</button>
           <button class="ghost small" onclick='showForm(${JSON.stringify(a)})'>编辑</button>
           <button class="danger small" onclick="delApp('${a.package}')">移除</button>
         </span>
@@ -378,6 +396,10 @@ async function lockTv(min) {
 }
 async function unlockTv() {
   await api("/api/unlock", {method: "POST"}); toast("已解除禁看"); refresh();
+}
+async function banApp(pkg, banned) {
+  await api("/api/ban", {method: "POST", body: JSON.stringify({package: pkg, banned})});
+  toast(banned ? "已禁止该应用（不分时段无法打开）" : "已解除禁止"); refresh();
 }
 async function bonus(pkg, min, winIdx) {
   const body = {package: pkg, minutes: min};

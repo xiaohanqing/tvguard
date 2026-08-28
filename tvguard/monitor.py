@@ -104,6 +104,11 @@ class Monitor(threading.Thread):
         if rule is None:
             return  # 未纳入管控的应用
 
+        # 应用级封禁：不分时段，永久禁止
+        if rule.get("banned"):
+            self.block(fg, rule, f"「{rule.get('name', fg)}」已被家长禁止使用")
+            return
+
         day = self.store.today_key()
         now_dt = datetime.now()
         usage = self.store.usage_seconds(day, fg)

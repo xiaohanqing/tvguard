@@ -67,6 +67,7 @@ def create_app(cfg: dict, store, adb) -> Flask:
             apps.append({
                 "package": pkg,
                 "name": rule.get("name", pkg),
+                "banned": rule.get("banned", False),
                 "daily_limit_minutes": limit,
                 "bonus_minutes": bonus,
                 "usage_minutes": round(usage / 60, 1),
@@ -122,6 +123,21 @@ def create_app(cfg: dict, store, adb) -> Flask:
     def api_unlock():
         store.clear_lock()
         store.log_event("unlock", "家长解除禁看")
+        return jsonify({"ok": True})
+
+    @app.route("/api/ban", methods=["POST"])
+    @auth_required
+    def api_ban():
+        pkg = (request.json.get("package") or "").strip()
+        banned = bool(request.json.get("banned", True))
+        rule = store.get_rule(pkg)
+        if not rule:
+            return jsonify({"error": "应用未纳入管控"}), 404
+        rule["banned"] = banned
+        store.upsert_rule(rule)
+        name = rule.get("name", pkg)
+        store.log_event("ban" if banned else "unban",
+            (f"已禁止「{name}」使用" if banned else f"解除「{name}」的禁止"), pkg)
         return jsonify({"ok": True})
 
     @app.route("/api/bonus", methods=["POST"])
@@ -186,6 +202,7 @@ def create_app(cfg: dict, store, adb) -> Flask:
             "name": (data.get("name") or pkg).strip(),
             "daily_limit_minutes": daily_cap,
             "windows": windows,
+            "banned": bool(data.get("banned", False)),
         }
         store.upsert_rule(rule)
         cap_txt = f"每日总限 {daily_cap} 分钟" if daily_cap else "不限总时长"
