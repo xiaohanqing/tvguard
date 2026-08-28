@@ -141,6 +141,26 @@ def create_app(cfg: dict, store, adb) -> Flask:
             (f"已禁止「{name}」使用" if banned else f"解除「{name}」的禁止"), pkg)
         return jsonify({"ok": True})
 
+    # ---------- 连接设置 ----------
+
+    @app.route("/api/settings", methods=["GET", "POST"])
+    @auth_required
+    def api_settings():
+        if request.method == "GET":
+            return jsonify({"adb_host": store.settings.get("adb_host", "")})
+        host = (request.json.get("adb_host") or "").strip()
+        if ":" not in host:
+            host += ":5555"
+        host = host.split(":")[0] + ":" + (host.split(":")[1] if ":" in host else "5555")
+        if not host.split(":")[0].replace(".", "").isdigit():
+            return jsonify({"error": "IP 不合法"}), 400
+        old = store.settings.get("adb_host")
+        store.set_setting("adb_host", host)
+        adb.host = host          # 立即生效，无需重启
+        if old != host:
+            store.log_event("conn", f"电视地址设置为 {host}")
+        return jsonify({"ok": True, "adb_host": host})
+
     # ---------- 配置导入导出 ----------
 
     @app.route("/api/export")

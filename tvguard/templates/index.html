@@ -100,6 +100,13 @@
     <button class="ghost small" onclick="testBlocker()">测试提示页</button>
   </div>
 
+  <div class="row" id="conn-setup" style="display:none; margin-top:10px;">
+    <span class="muted" style="font-size:12px;">电视 IP：</span>
+    <input id="s-host" placeholder="如 192.168.31.22" style="width:180px;">
+    <button class="small" onclick="saveSettings()">保存并连接</button>
+    <span class="muted" style="font-size:11px;">电视需开启 ADB：设置→系统→系统信息，遥控器按 上下左右</span>
+  </div>
+
   <div class="ctl-grid">
     <div class="ctl lock" id="ctl-lock">
       <div class="ctl-title">🚫 禁看 —— 立刻不让看（惩罚/该写作业了）</div>
@@ -250,6 +257,15 @@ async function refresh() {
     fg += ` <span style="color:var(--dim);font-size:11px;">${st.foreground}</span>`;
   }
   document.getElementById("fg-text").textContent = fg;
+
+  // 未连接时显示连接设置输入框
+  document.getElementById("conn-setup").style.display = st.connected ? "none" : "flex";
+  if (!st.connected) {
+    const inp = document.getElementById("s-host");
+    if (!inp.value) {
+      api("/api/settings").then(r => { inp.value = (r.adb_host || "").split(":")[0]; }).catch(() => {});
+    }
+  }
 
   // 禁看 / 暂停卡片状态：激活高亮 + 倒计时 + 不适用按钮禁用
   const remain = (untilStr) => {
@@ -434,6 +450,14 @@ async function importRules(input) {
     toast("导入失败：文件解析错误");
   }
   input.value = "";
+}
+async function saveSettings() {
+  const host = document.getElementById("s-host").value.trim();
+  if (!host) { toast("请填写电视 IP"); return; }
+  const r = await api("/api/settings", {method: "POST", body: JSON.stringify({adb_host: host})});
+  if (r.error) { toast(r.error); return; }
+  toast(`电视地址已保存为 ${r.adb_host}，连接中…`);
+  setTimeout(refresh, 4000);
 }
 async function bonus(pkg, min, winIdx) {
   const body = {package: pkg, minutes: min};

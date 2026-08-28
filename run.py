@@ -22,8 +22,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def build(cfg):
-    adb = Adb(cfg["tv"]["adb_path"], cfg["tv"]["adb_host"])
-    store = Store(os.path.join(BASE_DIR, "data"), cfg.get("reset_time", "00:00"))
+    # 电视地址以 data/settings.json 为准（面板可改），config.yaml 只做首次种子
+    store = Store(os.path.join(BASE_DIR, "data"), cfg.get("reset_time", "00:00"),
+                  defaults={"adb_host": cfg["tv"]["adb_host"]})
+    adb = Adb(cfg["tv"]["adb_path"], store.settings["adb_host"])
     return adb, store
 
 

@@ -14,13 +14,26 @@ WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
 class Store:
-    def __init__(self, data_dir: str, reset_time: str = "00:00"):
+    def __init__(self, data_dir: str, reset_time: str = "00:00",
+                 defaults: dict = None):
         self.data_dir = data_dir
         os.makedirs(data_dir, exist_ok=True)
         self.rules_path = os.path.join(data_dir, "rules.json")
         self.state_path = os.path.join(data_dir, "state.json")
+        self.settings_path = os.path.join(data_dir, "settings.json")
         self.reset_time = reset_time
         self._lock = threading.RLock()
+
+        # 连接设置（电视IP等，面板可改）。首次用 config.yaml 的值做种子
+        self.settings = self._load_json(self.settings_path, {})
+        if defaults:
+            changed = False
+            for k, v in (defaults or {}).items():
+                if k not in self.settings:
+                    self.settings[k] = v
+                    changed = True
+            if changed:
+                self._dump(self.settings_path, self.settings)
 
         # 运行时瞬态（不持久化）
         self.connected = False
@@ -160,6 +173,17 @@ class Store:
             self.state["lock_until"] = (
                 datetime.now() + timedelta(minutes=minutes)).isoformat()
             self._save()
+
+    # ---------- 连接设置 ----------
+
+    def set_setting(self, key: str, value):
+        with self._lock:
+            self.settings[key] = value
+            self._dump(self.settings_path, self.settings)
+
+    def save_settings(self):
+        with self._lock:
+            self._dump(self.settings_path, self.settings)
 
     def clear_lock(self):
         with self._lock:
