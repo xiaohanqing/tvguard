@@ -7,6 +7,9 @@ ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 RUN apt-get update && apt-get install -y --no-install-recommends curl unzip \
     && rm -rf /var/lib/apt/lists/*
 
+# WORKDIR 必须在所有 COPY 之前，否则代码会被复制到根目录
+WORKDIR /app
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements.txt
 
@@ -25,8 +28,6 @@ RUN set -e; \
     /opt/platform-tools/adb version
 
 ENV PATH="/opt/platform-tools:${PATH}"
-
-WORKDIR /app
 
 VOLUME /app/data
 EXPOSE 8787
