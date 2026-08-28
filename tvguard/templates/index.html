@@ -39,6 +39,8 @@
   .tag.live { color: var(--ok); border-color: var(--ok); }
   .tag.blocked { color: var(--bad); border-color: var(--bad); }
   .sched { font-size: 12px; color: var(--dim); margin-top: 6px; line-height: 1.7; }
+  .win-row { border-top: 1px solid var(--line); padding: 10px 0 6px; }
+  .win-row:first-child { border-top: 0; }
   .events { font-size: 13px; line-height: 1.9; color: var(--dim); }
   .events b { color: var(--text); font-weight: 500; }
   .wd { display: inline-flex; gap: 4px; }
@@ -119,10 +121,10 @@
     </div>
   </div>
   <div class="field"><label>显示名称</label><input id="f-name" placeholder="如 云视听极光"></div>
-  <div class="field"><label>每日可用时长（分钟，0 = 不限时长、仅限时段）</label>
-    <input id="f-limit" type="number" min="0" value="60"></div>
+  <div class="field"><label>每日总上限（分钟，0 = 不限总时长；所有时段的观看都会计入）</label>
+    <input id="f-limit" type="number" min="0" value="0"></div>
   <div class="field">
-    <label>允许时段（不添加 = 全天允许，仅受每日时长限制）</label>
+    <label>允许时段（每个时段可单独设限额；不添加 = 全天允许，仅受每日总上限约束）</label>
     <div id="f-schedules"></div>
     <button class="ghost small" style="margin-top:6px;" onclick="addSchedRow()">＋ 添加时段</button>
   </div>
@@ -181,9 +183,21 @@ function toast(msg) {
   setTimeout(() => t.style.display = "none", 2500);
 }
 
-function fmtSched(s) {
-  const days = "周" + s.days.map(d => WD.find(w => w[0] === d)[1]).join("");
-  return `${days} ${s.start}-${s.end}`;
+function fmtDays(days) {
+  // ["mon","tue","wed","thu","fri"] → "周一至周五"；离散天用顿号
+  const idx = days.map(d => WD.findIndex(w => w[0] === d)).filter(i => i >= 0).sort((a, b) => a - b);
+  if (!idx.length) return "每天";
+  const groups = [];
+  let s = idx[0], p = idx[0];
+  for (let i = 1; i < idx.length; i++) {
+    if (idx[i] === p + 1) { p = idx[i]; continue; }
+    groups.push([s, p]); s = p = idx[i];
+  }
+  groups.push([s, p]);
+  return groups.map(([a, b]) =>
+    a === b ? `周${WD[a][1]}`
+    : b - a === 1 ? `周${WD[a][1]}、周${WD[b][1]}`
+    : `周${WD[a][1]}至周${WD[b][1]}`).join("、");
 }
 
 async function refresh() {
@@ -227,34 +241,61 @@ async function refresh() {
 function renderApps(st) {
   const el = document.getElementById("apps");
   if (!st.apps.length) {
-    el.innerHTML = `<div class="card muted">还没有管控任何应用。在电视上打开小孩常用的 App，然后点「＋ 添加应用」。</div>`;
+    el.innerHTML = `<div class="card muted">还没有管控任何应用。在电视上打开小孩常用的 App，然后点「＋ 从电视上选择应用」。</div>`;
     return;
   }
   el.innerHTML = st.apps.map(a => {
-    const pct = a.limit_minutes > 0
-      ? Math.min(100, a.usage_minutes / (a.limit_minutes + a.bonus_minutes) * 100) : 0;
-    const over = a.limit_minutes > 0 && a.remaining_minutes <= 0;
-    const sched = a.schedules.length
-      ? a.schedules.map(fmtSched).join("　") : "全天允许";
     let tag = "";
     if (a.is_foreground) tag += `<span class="tag live">正在看</span> `;
-    if (!a.in_schedule) tag += `<span class="tag blocked">时段外</span> `;
-    else if (over) tag += `<span class="tag blocked">已超时</span> `;
-    const remain = a.limit_minutes > 0
-      ? `剩余 ${a.remaining_minutes} 分钟` : "不限时长";
+    if (!a.no_windows && !a.in_window) tag += `<span class="tag blocked">时段外</span> `;
+
+    // 每日总上限行
+    let totalHtml = "";
+    if (a.daily_limit_minutes > 0) {
+      const pct = Math.min(100, a.usage_minutes / (a.daily_limit_minutes + a.bonus_minutes) * 100);
+      const over = a.remaining_minutes <= 0;
+      if (over) tag += `<span class="tag blocked">今日已用完</span> `;
+      totalHtml = `<div class="sched" style="margin-top:6px;">今日共 ${a.usage_minutes} 分钟 / 上限 ${a.daily_limit_minutes} 分${a.bonus_minutes ? ` + 加时 ${a.bonus_minutes}` : ""} · 剩余 ${Math.max(0, a.remaining_minutes)} 分钟</div>
+        <div class="bar"><div class="${over ? "over" : ""}" style="width:${pct}%"></div></div>`;
+    } else {
+      totalHtml = `<div class="sched" style="margin-top:6px;">今日共 ${a.usage_minutes} 分钟 · 不限总时长</div>`;
+    }
+
+    // 各时段窗口行
+    const winHtml = (a.windows || []).map((w, i) => {
+      const wpct = w.limit_minutes > 0
+        ? Math.min(100, w.usage_minutes / (w.limit_minutes + w.bonus_minutes) * 100) : 0;
+      const wover = w.limit_minutes > 0 && w.remaining_minutes <= 0;
+      const cap = w.limit_minutes > 0 ? `限额 ${w.limit_minutes} 分` : "不限时长";
+      const remain = w.limit_minutes > 0 ? ` · 剩余 ${Math.max(0, w.remaining_minutes)} 分` : "";
+      const extra = w.bonus_minutes ? ` · 已加时 ${w.bonus_minutes} 分` : "";
+      return `<div class="win-row">
+        <div class="row" style="justify-content:space-between;">
+          <span>${fmtDays(w.days)} ${w.start}–${w.end} · ${cap}${remain}${extra}
+            ${w.active ? `<span class="tag live">当前时段</span>` : (wover ? `<span class="tag blocked">已用完</span>` : "")}</span>
+          <span class="row">
+            <button class="ghost small" onclick="bonus('${a.package}', 15, ${i})">+15分</button>
+            <button class="ghost small" onclick="bonus('${a.package}', 30, ${i})">+30分</button>
+          </span>
+        </div>
+        ${w.limit_minutes > 0 ? `<div class="bar"><div class="${wover ? "over" : ""}" style="width:${wpct}%"></div></div>` : ""}
+        <div class="muted" style="font-size:11px;">本时段已看 ${w.usage_minutes} 分钟</div>
+      </div>`;
+    }).join("");
+    const winSection = a.windows.length
+      ? winHtml
+      : `<div class="sched">全天允许（未设置时段）</div>`;
+
     return `<div class="card">
       <div class="app-head">
         <span class="app-name">${a.name} ${tag}</span>
-        <span class="muted">今日 ${a.usage_minutes} 分钟 · ${remain}${a.bonus_minutes ? ` · 已加时 ${a.bonus_minutes} 分` : ""}</span>
+        <span class="row">
+          <button class="ghost small" onclick='showForm(${JSON.stringify(a)})'>编辑</button>
+          <button class="danger small" onclick="delApp('${a.package}')">移除</button>
+        </span>
       </div>
-      ${a.limit_minutes > 0 ? `<div class="bar"><div class="${over ? "over" : ""}" style="width:${pct}%"></div></div>` : ""}
-      <div class="sched">限额 ${a.limit_minutes} 分钟/天 · ${sched}</div>
-      <div class="row" style="justify-content:flex-end; margin-top:8px;">
-        <button class="ghost small" onclick="bonus('${a.package}', 15)">+15分</button>
-        <button class="ghost small" onclick="bonus('${a.package}', 30)">+30分</button>
-        <button class="ghost small" onclick='showForm(${JSON.stringify(a)})'>编辑</button>
-        <button class="danger small" onclick="delApp('${a.package}')">移除</button>
-      </div>
+      ${totalHtml}
+      <div style="margin-top:10px;">${winSection}</div>
     </div>`;
   }).join("");
 }
@@ -270,8 +311,10 @@ async function testBlocker() {
 async function resume() {
   await api("/api/resume", {method: "POST"}); toast("已恢复控制"); refresh();
 }
-async function bonus(pkg, min) {
-  await api("/api/bonus", {method: "POST", body: JSON.stringify({package: pkg, minutes: min})});
+async function bonus(pkg, min, winIdx) {
+  const body = {package: pkg, minutes: min};
+  if (winIdx !== undefined) body.window = winIdx;
+  await api("/api/bonus", {method: "POST", body: JSON.stringify(body)});
   toast(`已加时 ${min} 分钟`); refresh();
 }
 async function delApp(pkg) {
@@ -287,42 +330,51 @@ function showForm(app) {
   document.getElementById("f-package").value = app ? app.package : "";
   document.getElementById("f-package").disabled = !!app;
   document.getElementById("f-name").value = app ? app.name : "";
-  document.getElementById("f-limit").value = app ? app.limit_minutes : 60;
+  document.getElementById("f-limit").value = app ? app.daily_limit_minutes : 0;
   const box = document.getElementById("f-schedules");
   box.innerHTML = "";
-  (app ? app.schedules : []).forEach(s => addSchedRow(s));
+  const wins = app ? (app.windows || []) : [];
+  if (wins.length) wins.forEach(w => addSchedRow(w));
+  else if (!app) addSchedRow();
   document.getElementById("form").scrollIntoView({behavior: "smooth"});
 }
 function hideForm() {
   editing = null;
   document.getElementById("form").style.display = "none";
 }
-function addSchedRow(s) {
-  s = s || {days: ["mon","tue","wed","thu","fri"], start: "18:30", end: "20:00"};
+function addSchedRow(w) {
+  w = w || {days: ["mon","tue","wed","thu","fri"], start: "18:30", end: "20:00", limit_minutes: 30};
   const div = document.createElement("div");
-  div.className = "row";
-  div.style.marginBottom = "6px";
+  div.style.cssText = "border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px;";
   const wd = WD.map(([v, l]) =>
-    `<label class="${s.days.includes(v) ? "checked" : ""}">
-       <input type="checkbox" value="${v}" ${s.days.includes(v) ? "checked" : ""}>${l}</label>`).join("");
-  div.innerHTML = `<span class="wd">${wd}</span>
-    <input type="time" value="${s.start}"> — <input type="time" value="${s.end}">
-    <button class="danger small" onclick="this.parentNode.remove()">删</button>`;
+    `<label class="${w.days.includes(v) ? "checked" : ""}">
+       <input type="checkbox" value="${v}" ${w.days.includes(v) ? "checked" : ""}>${l}</label>`).join("");
+  div.innerHTML = `<div class="wd" style="margin-bottom:8px;">${wd}</div>
+    <div class="row">
+      <input type="time" value="${w.start}"> — <input type="time" value="${w.end}">
+      <span class="muted" style="font-size:12px;">限额</span>
+      <input type="number" min="0" value="${w.limit_minutes || 0}" style="width:70px;" title="0 = 本时段不限时长">
+      <span class="muted" style="font-size:12px;">分/次（0=不限）</span>
+      <button class="danger small" style="margin-left:auto;" onclick="this.closest('div[style]').remove()">删除</button>
+    </div>`;
   div.querySelectorAll("input[type=checkbox]").forEach(cb =>
     cb.addEventListener("change", () => cb.parentNode.classList.toggle("checked", cb.checked)));
   document.getElementById("f-schedules").appendChild(div);
 }
 async function saveApp() {
-  const schedules = [...document.querySelectorAll("#f-schedules > .row")].map(row => ({
-    days: [...row.querySelectorAll("input[type=checkbox]:checked")].map(cb => cb.value),
-    start: row.querySelectorAll("input[type=time]")[0].value,
-    end: row.querySelectorAll("input[type=time]")[1].value,
-  })).filter(s => s.days.length && s.start && s.end);
+  const windows = [...document.querySelectorAll("#f-schedules > div")]
+    .filter(d => d.querySelector("input[type=checkbox]"))
+    .map(row => ({
+      days: [...row.querySelectorAll("input[type=checkbox]:checked")].map(cb => cb.value),
+      start: row.querySelectorAll("input[type=time]")[0].value,
+      end: row.querySelectorAll("input[type=time]")[1].value,
+      limit_minutes: parseInt(row.querySelector("input[type=number]").value) || 0,
+    })).filter(w => w.days.length && w.start && w.end);
   const body = {
     package: document.getElementById("f-package").value.trim(),
     name: document.getElementById("f-name").value.trim(),
     daily_limit_minutes: parseInt(document.getElementById("f-limit").value) || 0,
-    schedules,
+    windows,
   };
   if (!body.package) { toast("请填写包名"); return; }
   const r = await api("/api/apps", {method: "POST", body: JSON.stringify(body)});

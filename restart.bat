@@ -9,7 +9,7 @@ echo ==^> Starting TVGuard...
 start "TVGuard" /min python run.py
 
 ping -n 4 127.0.0.1 >nul
-curl -s -m 3 http://127.0.0.1:8787/api/status >nul 2>&1
+curl --noproxy "*" -s -m 3 http://127.0.0.1:8787/api/status >nul 2>&1
 if %errorlevel%==0 (
     echo ==^> OK: panel at http://127.0.0.1:8787
 ) else (

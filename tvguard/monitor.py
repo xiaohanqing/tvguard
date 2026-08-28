@@ -90,35 +90,85 @@ class Monitor(threading.Thread):
             return  # 未纳入管控的应用
 
         day = self.store.today_key()
+        now_dt = datetime.now()
         usage = self.store.usage_seconds(day, fg)
         limit = rule.get("daily_limit_minutes", 0) * 60
         bonus = self.store.bonus_minutes(day, fg) * 60
 
-        if not self.store.in_schedule(rule, datetime.now()):
+        win_idx = self.store.find_window(rule, now_dt)
+
+        if win_idx is None:
+            # 不在任何允许窗口内
             self.block(fg, rule, self._reason_schedule(rule))
-        elif limit > 0 and usage + elapsed > limit + bonus:
-            self.block(fg, rule, self._reason_timeout(rule, fg, usage, bonus))
-        else:
+            return
+
+        # 每日总上限（0 = 不限）
+        if limit > 0 and usage + elapsed > limit + bonus:
+            self.block(fg, rule, self._reason_daily(rule, usage, bonus))
+            return
+
+        if win_idx == -1:
+            # 无窗口定义，全天允许，只受每日总额约束
             self.store.add_usage(day, fg, elapsed)
+            return
+
+        # 窗口内：窗口限额（0 = 窗口内不限，仅受每日总额约束）
+        w = rule["windows"][win_idx]
+        wlimit = w.get("limit_minutes", 0) * 60
+        wbonus = self.store.win_bonus_minutes(day, fg, win_idx) * 60
+        wusage = self.store.win_usage(day, fg, win_idx)
+        if wlimit > 0 and wusage + elapsed > wlimit + wbonus:
+            self.block(fg, rule, self._reason_window(w, wusage))
+            return
+
+        self.store.add_usage(day, fg, elapsed)
+        self.store.add_win_usage(day, fg, win_idx, elapsed)
+
+    def _fmt_days(self, days) -> str:
+        """["mon","tue","wed","thu","fri"] → "周一至周五"；离散天用顿号。"""
+        idx = sorted(WEEKDAYS.index(d) for d in days if d in WEEKDAYS)
+        if not idx:
+            return "每天"
+        groups, start, prev = [], idx[0], idx[0]
+        for i in idx[1:]:
+            if i == prev + 1:
+                prev = i
+                continue
+            groups.append((start, prev))
+            start = prev = i
+        groups.append((start, prev))
+        parts = []
+        for a, b in groups:
+            if a == b:
+                parts.append(f"周{WEEKDAY_CN[WEEKDAYS[a]]}")
+            elif b - a == 1:
+                parts.append(f"周{WEEKDAY_CN[WEEKDAYS[a]]}、周{WEEKDAY_CN[WEEKDAYS[b]]}")
+            else:
+                parts.append(f"周{WEEKDAY_CN[WEEKDAYS[a]]}至周{WEEKDAY_CN[WEEKDAYS[b]]}")
+        return "、".join(parts)
 
     def _reason_schedule(self, rule: dict) -> str:
-        """时段外拦截文案：告诉孩子什么时候可以看。"""
-        schedules = rule.get("schedules") or []
-        if not schedules:
+        """时段外拦截文案：告诉孩子什么时候可以看、各能看多久。"""
+        windows = rule.get("windows") or []
+        if not windows:
             return "现在不能观看"
         parts = []
-        for s in schedules:
-            days = "、".join(WEEKDAY_CN.get(d, d) for d in s.get("days", []))
-            parts.append(f"周{days} {s.get('start', '')}–{s.get('end', '')}")
-        return "现在的时段不能看。可以看的时间：" + "；".join(parts)
+        for w in windows:
+            cap = f"（限{w['limit_minutes']}分钟）" if w.get("limit_minutes") else ""
+            parts.append(f"{self._fmt_days(w['days'])} {w['start']}–{w['end']}{cap}")
+        return "现在不是可以看的时间。可以看：" + "；".join(parts)
 
-    def _reason_timeout(self, rule: dict, pkg: str, usage: float, bonus: float) -> str:
-        """超时拦截文案：今天用了多久，限额多少。"""
-        limit = rule.get("daily_limit_minutes", 0)
+    def _reason_window(self, w: dict, wusage: float) -> str:
+        limit = w.get("limit_minutes", 0)
+        used = int(wusage // 60)
+        return f"这个时段的 {limit} 分钟用完了（已看 {used} 分钟），等下一个时段吧"
+
+    def _reason_daily(self, rule: dict, usage: float, bonus: float) -> str:
+        cap = rule.get("daily_limit_minutes", 0)
         used = int(usage // 60)
         if bonus > 0:
-            return f"今天的 {limit} 分钟 + 加时 {int(bonus // 60)} 分钟都用完啦（已看 {used} 分钟）"
-        return f"今天的 {limit} 分钟已经用完了（已看 {used} 分钟）"
+            return f"今天的 {cap} 分钟 + 加时 {int(bonus // 60)} 分钟都用完啦（共看 {used} 分钟）"
+        return f"今天的总时长 {cap} 分钟已经用完了（共看 {used} 分钟）"
 
     def block(self, package: str, rule: dict, reason: str):
         name = rule.get("name", package)

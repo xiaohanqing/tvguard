@@ -40,24 +40,42 @@ def create_app(cfg: dict, store, adb) -> Flask:
     @auth_required
     def api_status():
         day = store.today_key()
+        now = datetime.now()
         apps = []
         for rule in store.all_rules():
             pkg = rule["package"]
             usage = store.usage_seconds(day, pkg)
             bonus = store.bonus_minutes(day, pkg)
             limit = rule.get("daily_limit_minutes", 0)
-            in_sched = store.in_schedule(rule, datetime.now())
+            win_idx = store.find_window(rule, now)
+            wins = []
+            for i, w in enumerate(rule.get("windows", [])):
+                wusage = store.win_usage(day, pkg, i)
+                wbonus = store.win_bonus_minutes(day, pkg, i)
+                wlimit = w.get("limit_minutes", 0)
+                wins.append({
+                    "days": w.get("days", []),
+                    "start": w.get("start"),
+                    "end": w.get("end"),
+                    "limit_minutes": wlimit,
+                    "bonus_minutes": wbonus,
+                    "usage_minutes": round(wusage / 60, 1),
+                    "remaining_minutes": None if wlimit <= 0
+                        else round(max(0, (wlimit + wbonus) - wusage / 60), 1),
+                    "active": i == win_idx,
+                })
             apps.append({
                 "package": pkg,
                 "name": rule.get("name", pkg),
-                "limit_minutes": limit,
+                "daily_limit_minutes": limit,
                 "bonus_minutes": bonus,
                 "usage_minutes": round(usage / 60, 1),
                 "remaining_minutes": None if limit <= 0
-                else round(max(0, (limit + bonus) - usage / 60), 1),
-                "in_schedule": in_sched,
+                    else round(max(0, (limit + bonus) - usage / 60), 1),
+                "in_window": win_idx is not None,
+                "no_windows": win_idx == -1,
                 "is_foreground": pkg == store.foreground,
-                "schedules": rule.get("schedules", []),
+                "windows": wins,
             })
         return jsonify({
             "now": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -96,8 +114,20 @@ def create_app(cfg: dict, store, adb) -> Flask:
         rule = store.get_rule(pkg)
         if not rule:
             return jsonify({"error": "应用未纳入管控"}), 404
-        store.add_bonus(store.today_key(), pkg, minutes)
-        store.log_event("bonus", f"「{rule.get('name', pkg)}」加时 {minutes} 分钟", pkg)
+        name = rule.get("name", pkg)
+        win_idx = request.json.get("window")
+        if win_idx is None:
+            store.add_bonus(store.today_key(), pkg, minutes)
+            store.log_event("bonus", f"「{name}」今日总时长加 {minutes} 分钟", pkg)
+        else:
+            win_idx = int(win_idx)
+            wins = rule.get("windows", [])
+            if win_idx < 0 or win_idx >= len(wins):
+                return jsonify({"error": "时段不存在"}), 404
+            store.add_win_bonus(store.today_key(), pkg, win_idx, minutes)
+            w = wins[win_idx]
+            store.log_event("bonus",
+                f"「{name}」时段 {w['start']}–{w['end']} 加 {minutes} 分钟", pkg)
         return jsonify({"ok": True})
 
     # ---------- 规则 ----------
@@ -109,14 +139,40 @@ def create_app(cfg: dict, store, adb) -> Flask:
         pkg = (data.get("package") or "").strip()
         if not pkg or "." not in pkg:
             return jsonify({"error": "包名不合法"}), 400
+        windows = []
+        for w in data.get("windows") or []:
+            days = [d for d in (w.get("days") or []) if d in WEEKDAY_LABELS]
+            start = (w.get("start") or "").strip()
+            end = (w.get("end") or "").strip()
+            if not (days and start and end):
+                continue
+            try:
+                limit = max(0, int(w.get("limit_minutes", 0) or 0))
+            except (TypeError, ValueError):
+                limit = 0
+            windows.append({"days": days, "start": start, "end": end,
+                            "limit_minutes": limit})
+        # 兼容旧客户端的 schedules 字段（整日限额语义）
+        if not windows and data.get("schedules"):
+            for s in data["schedules"]:
+                days = [d for d in (s.get("days") or []) if d in WEEKDAY_LABELS]
+                if days and s.get("start") and s.get("end"):
+                    windows.append({"days": days, "start": s["start"],
+                                    "end": s["end"], "limit_minutes": 0})
+        try:
+            daily_cap = max(0, int(data.get("daily_limit_minutes", 0) or 0))
+        except (TypeError, ValueError):
+            daily_cap = 0
         rule = {
             "package": pkg,
             "name": (data.get("name") or pkg).strip(),
-            "daily_limit_minutes": max(0, int(data.get("daily_limit_minutes", 0))),
-            "schedules": _clean_schedules(data.get("schedules") or []),
+            "daily_limit_minutes": daily_cap,
+            "windows": windows,
         }
         store.upsert_rule(rule)
-        store.log_event("rule", f"保存规则：「{rule['name']}」每日 {rule['daily_limit_minutes']} 分钟")
+        cap_txt = f"每日总限 {daily_cap} 分钟" if daily_cap else "不限总时长"
+        store.log_event("rule",
+            f"保存规则：「{rule['name']}」{len(windows)} 个时段，{cap_txt}")
         return jsonify({"ok": True})
 
     @app.route("/api/apps/delete", methods=["POST"])
@@ -181,17 +237,6 @@ def create_app(cfg: dict, store, adb) -> Flask:
         return jsonify({"error": "not found"}), 404
 
     return app
-
-
-def _clean_schedules(schedules):
-    cleaned = []
-    for s in schedules:
-        days = [d for d in (s.get("days") or []) if d in WEEKDAY_LABELS]
-        start = (s.get("start") or "").strip()
-        end = (s.get("end") or "").strip()
-        if days and start and end:
-            cleaned.append({"days": days, "start": start, "end": end})
-    return cleaned
 
 
 def format_schedule(s) -> str:

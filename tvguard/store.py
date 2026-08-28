@@ -30,6 +30,15 @@ class Store:
         self.rules = self._load_json(self.rules_path, {"apps": []})
         if "apps" not in self.rules:
             self.rules = {"apps": []}
+        # 旧格式（schedules + 整日限额）迁移为 windows 格式
+        migrated = False
+        for r in self.rules["apps"]:
+            if "windows" not in r:
+                self._migrate_rule(r)
+                migrated = True
+            self._normalize_rule(r)
+        if migrated:
+            self._save()
         self.state = self._load_json(self.state_path, {})
         self.state.setdefault("days", {})
         self.state.setdefault("paused_until", None)
@@ -98,6 +107,30 @@ class Store:
     def bonus_minutes(self, day: str, package: str) -> int:
         return self.state.get("days", {}).get(day, {}).get("bonus", {}).get(package, 0)
 
+    # ---------- 窗口级用量 / 加时 ----------
+
+    def _win_map(self, day: str, package: str, key: str) -> dict:
+        d = self._day(day)
+        return d.setdefault(key, {}).setdefault(package, {})
+
+    def win_usage(self, day: str, package: str, idx: int) -> float:
+        return self._win_map(day, package, "win_usage").get(str(idx), 0)
+
+    def add_win_usage(self, day: str, package: str, idx: int, seconds: float):
+        with self._lock:
+            m = self._win_map(day, package, "win_usage")
+            m[str(idx)] = m.get(str(idx), 0) + seconds
+            self._save()
+
+    def win_bonus_minutes(self, day: str, package: str, idx: int) -> int:
+        return self._win_map(day, package, "win_bonus").get(str(idx), 0)
+
+    def add_win_bonus(self, day: str, package: str, idx: int, minutes: int):
+        with self._lock:
+            m = self._win_map(day, package, "win_bonus")
+            m[str(idx)] = m.get(str(idx), 0) + minutes
+            self._save()
+
     # ---------- 暂停 ----------
 
     def set_paused(self, minutes: int):
@@ -138,6 +171,35 @@ class Store:
 
     # ---------- 规则 ----------
 
+    def _migrate_rule(self, rule: dict):
+        """旧格式（schedules + 整日限额）→ windows 格式。
+        迁移语义：每个窗口不限窗口内时长，保留整日限额，行为与旧版一致。"""
+        windows = []
+        for s in rule.get("schedules") or []:
+            windows.append({
+                "days": s.get("days") or [],
+                "start": s.get("start", ""),
+                "end": s.get("end", ""),
+                "limit_minutes": 0,
+            })
+        rule["windows"] = windows
+
+    def _normalize_rule(self, rule: dict):
+        rule.setdefault("name", rule["package"])
+        rule["daily_limit_minutes"] = max(0, int(rule.get("daily_limit_minutes", 0) or 0))
+        wins = []
+        for w in rule.get("windows") or []:
+            days = [d for d in (w.get("days") or []) if d in WEEKDAYS]
+            if not days or not w.get("start") or not w.get("end"):
+                continue
+            wins.append({
+                "days": days,
+                "start": w["start"],
+                "end": w["end"],
+                "limit_minutes": max(0, int(w.get("limit_minutes", 0) or 0)),
+            })
+        rule["windows"] = wins
+
     def get_rule(self, package: str):
         for app in self.rules["apps"]:
             if app["package"] == package:
@@ -148,9 +210,7 @@ class Store:
         return self.rules["apps"]
 
     def upsert_rule(self, rule: dict):
-        rule["daily_limit_minutes"] = int(rule.get("daily_limit_minutes", 0))
-        rule.setdefault("name", rule["package"])
-        rule.setdefault("schedules", [])
+        self._normalize_rule(rule)
         with self._lock:
             for i, app in enumerate(self.rules["apps"]):
                 if app["package"] == rule["package"]:
@@ -169,32 +229,34 @@ class Store:
                 self._save()
             return changed
 
-    # ---------- 时间段判断 ----------
+    # ---------- 时段窗口 ----------
 
-    def in_schedule(self, rule: dict, now: datetime) -> bool:
-        """无 schedules 字段或为空 = 全天允许（仅受每日额度约束）。"""
-        schedules = rule.get("schedules") or []
-        if not schedules:
-            return True
+    def find_window(self, rule: dict, now: datetime):
+        """返回当前时间命中的窗口下标；不在任何窗口返回 None。
+        无窗口定义的规则返回 -1（全天允许，仅受每日总额约束）。"""
+        windows = rule.get("windows") or []
+        if not windows:
+            return -1
         t = now.hour * 60 + now.minute
         wd = WEEKDAYS[now.weekday()]
         yd = WEEKDAYS[(now.weekday() - 1) % 7]
-        for s in schedules:
-            days = [d.lower()[:3] for d in s.get("days", [])]
+        for i, w in enumerate(windows):
             try:
-                sh, sm = map(int, s.get("start", "00:00").split(":"))
-                eh, em = map(int, s.get("end", "24:00").split(":"))
+                sh, sm = map(int, w["start"].split(":"))
+                eh, em = map(int, w["end"].split(":"))
             except ValueError:
                 continue
             start, end = sh * 60 + sm, eh * 60 + em
             if end > start:
-                # 常规窗口
-                if wd in days and start <= t < end:
-                    return True
+                if wd in w["days"] and start <= t < end:
+                    return i
             else:
                 # 跨午夜窗口：开始时刻在当天后半段，结束在次日前半段
-                if wd in days and t >= start:
-                    return True
-                if yd in days and t < end:
-                    return True
-        return False
+                if wd in w["days"] and t >= start:
+                    return i
+                if yd in w["days"] and t < end:
+                    return i
+        return None
+
+    def in_schedule(self, rule: dict, now: datetime) -> bool:
+        return self.find_window(rule, now) is not None
