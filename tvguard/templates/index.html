@@ -85,9 +85,13 @@
     <div class="row">
       <span class="dot off" id="conn-dot"></span>
       <span id="conn-text">电视未连接</span>
+      <span id="paused-tag" class="tag blocked" style="display:none;"></span>
       <span class="muted" id="fg-text"></span>
     </div>
     <div class="row" id="pause-ctl">
+      <button class="small" onclick="lockTv(10)" style="background:var(--bad);">禁看10分</button>
+      <button class="small" onclick="lockTv(30)" style="background:var(--bad);">禁看30分</button>
+      <button class="ghost small" onclick="unlockTv()">解除禁看</button>
       <button class="ghost small" onclick="testBlocker()">测试提示页</button>
       <button class="ghost small" onclick="pause(15)">暂停15分</button>
       <button class="ghost small" onclick="pause(60)">暂停1小时</button>
@@ -221,6 +225,22 @@ async function refresh() {
   document.getElementById("fg-text").textContent = fg;
   document.getElementById("pause-ctl").style.opacity = st.paused ? 1 : 0.6;
 
+  // 暂停 / 禁看状态提示
+  const pt = document.getElementById("paused-tag");
+  if (st.locked && st.lock_until) {
+    const end = new Date(st.lock_until);
+    const min = Math.max(0, Math.round((end - new Date()) / 60000));
+    pt.textContent = `🚫 禁看中，${end.toTimeString().slice(0,5)} 自动解除（约${min}分钟后）`;
+    pt.style.display = "inline-block";
+  } else if (st.paused && st.paused_until) {
+    const end = new Date(st.paused_until);
+    const min = Math.max(0, Math.round((end - new Date()) / 60000));
+    pt.textContent = `⏸ 管控已暂停，${end.toTimeString().slice(0,5)} 自动恢复（约${min}分钟后）`;
+    pt.style.display = "inline-block";
+  } else {
+    pt.style.display = "none";
+  }
+
   // 正在看的应用未受管控时，给出一键添加提示
   const sug = document.getElementById("suggest");
   if (st.connected && st.foreground && !st.foreground_controlled) {
@@ -310,6 +330,13 @@ async function testBlocker() {
 }
 async function resume() {
   await api("/api/resume", {method: "POST"}); toast("已恢复控制"); refresh();
+}
+async function lockTv(min) {
+  await api("/api/lock", {method: "POST", body: JSON.stringify({minutes: min})});
+  toast(`已开启禁看 ${min} 分钟`); refresh();
+}
+async function unlockTv() {
+  await api("/api/unlock", {method: "POST"}); toast("已解除禁看"); refresh();
 }
 async function bonus(pkg, min, winIdx) {
   const body = {package: pkg, minutes: min};

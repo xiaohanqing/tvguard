@@ -89,6 +89,14 @@ class Monitor(threading.Thread):
         if rule is None:
             return  # 未纳入管控的应用
 
+        # 禁看中（家长锁定）：优先级最高，额度/时段全部无视
+        locked, lock_end = self.store.lock_info()
+        if locked:
+            end_str = lock_end.strftime("%H:%M") if lock_end else ""
+            self.block(fg, rule,
+                f"家长设置了现在不能看，{end_str} 后再来吧".replace("， ", "，"))
+            return
+
         day = self.store.today_key()
         now_dt = datetime.now()
         usage = self.store.usage_seconds(day, fg)

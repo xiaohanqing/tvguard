@@ -77,6 +77,7 @@ def create_app(cfg: dict, store, adb) -> Flask:
                 "is_foreground": pkg == store.foreground,
                 "windows": wins,
             })
+        locked, lock_end = store.lock_info()
         return jsonify({
             "now": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "connected": store.connected,
@@ -85,6 +86,8 @@ def create_app(cfg: dict, store, adb) -> Flask:
             "foreground_controlled": store.foreground is not None and store.get_rule(store.foreground) is not None,
             "paused": store.is_paused(),
             "paused_until": store.state.get("paused_until"),
+            "locked": locked,
+            "lock_until": lock_end.isoformat() if lock_end else None,
             "apps": apps,
             "events": store.events(20),
         })
@@ -104,6 +107,21 @@ def create_app(cfg: dict, store, adb) -> Flask:
     def api_resume():
         store.resume()
         store.log_event("resume", "恢复控制")
+        return jsonify({"ok": True})
+
+    @app.route("/api/lock", methods=["POST"])
+    @auth_required
+    def api_lock():
+        minutes = int(request.json.get("minutes", 10))
+        store.set_lock(minutes)
+        store.log_event("lock", f"家长开启禁看 {minutes} 分钟")
+        return jsonify({"ok": True})
+
+    @app.route("/api/unlock", methods=["POST"])
+    @auth_required
+    def api_unlock():
+        store.clear_lock()
+        store.log_event("unlock", "家长解除禁看")
         return jsonify({"ok": True})
 
     @app.route("/api/bonus", methods=["POST"])

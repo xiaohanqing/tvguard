@@ -153,6 +153,31 @@ class Store:
         except ValueError:
             return False
 
+    # ---------- 禁看（家长主动锁定） ----------
+
+    def set_lock(self, minutes: int):
+        with self._lock:
+            self.state["lock_until"] = (
+                datetime.now() + timedelta(minutes=minutes)).isoformat()
+            self._save()
+
+    def clear_lock(self):
+        with self._lock:
+            if self.state.get("lock_until"):
+                self.state["lock_until"] = None
+                self._save()
+
+    def lock_info(self):
+        """返回 (是否禁看中, 结束时间 datetime|None)。"""
+        until = self.state.get("lock_until")
+        if not until:
+            return False, None
+        try:
+            end = datetime.fromisoformat(until)
+        except ValueError:
+            return False, None
+        return datetime.now() < end, end
+
     # ---------- 事件日志 ----------
 
     def log_event(self, etype: str, message: str, package: str = ""):
