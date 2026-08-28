@@ -246,6 +246,20 @@ class Store:
                 self.rules["apps"].append(rule)
             self._save()
 
+    def replace_rules(self, apps: list):
+        """整批替换规则（导入用），逐条规范化。"""
+        cleaned = []
+        for r in apps:
+            if not isinstance(r, dict) or not r.get("package"):
+                continue
+            self._migrate_rule(r) if "windows" not in r else None
+            self._normalize_rule(r)
+            cleaned.append(r)
+        with self._lock:
+            self.rules["apps"] = cleaned
+            self._save()
+        return len(cleaned)
+
     def delete_rule(self, package: str) -> bool:
         with self._lock:
             before = len(self.rules["apps"])

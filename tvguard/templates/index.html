@@ -125,7 +125,12 @@
 <div class="card" id="add-entry">
   <div class="row" style="justify-content: space-between;">
     <span>管控应用</span>
-    <button class="small" onclick="openPicker()">＋ 从电视上选择应用</button>
+    <span class="row">
+      <button class="ghost small" onclick="exportRules()" title="把当前全部规则导出为文件，可导入到另一台服务">导出配置</button>
+      <button class="ghost small" onclick="document.getElementById('import-file').click()">导入配置</button>
+      <input type="file" id="import-file" accept=".json" style="display:none;" onchange="importRules(this)">
+      <button class="small" onclick="openPicker()">＋ 从电视上选择应用</button>
+    </span>
   </div>
 </div>
 
@@ -400,6 +405,28 @@ async function unlockTv() {
 async function banApp(pkg, banned) {
   await api("/api/ban", {method: "POST", body: JSON.stringify({package: pkg, banned})});
   toast(banned ? "已禁止该应用（不分时段无法打开）" : "已解除禁止"); refresh();
+}
+async function exportRules() {
+  const blob = await (await api("/api/export")).blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `tvguard-rules-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast("已导出规则文件");
+}
+async function importRules(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const r = await api("/api/import", {method: "POST", body: text});
+    if (r.error) { toast("导入失败：" + r.error); return; }
+    toast(`导入成功，共 ${r.count} 条规则`); refresh();
+  } catch (e) {
+    toast("导入失败：文件解析错误");
+  }
+  input.value = "";
 }
 async function bonus(pkg, min, winIdx) {
   const body = {package: pkg, minutes: min};

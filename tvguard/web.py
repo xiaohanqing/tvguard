@@ -1,8 +1,9 @@
 """Web 家长面板：Flask API + 单页面。"""
 import functools
+import json
 from datetime import datetime
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from .adb import label_for
 
@@ -139,6 +140,37 @@ def create_app(cfg: dict, store, adb) -> Flask:
         store.log_event("ban" if banned else "unban",
             (f"已禁止「{name}」使用" if banned else f"解除「{name}」的禁止"), pkg)
         return jsonify({"ok": True})
+
+    # ---------- 配置导入导出 ----------
+
+    @app.route("/api/export")
+    @auth_required
+    def api_export():
+        payload = {
+            "type": "tvguard-rules",
+            "version": 1,
+            "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "rules": store.all_rules(),
+        }
+        fname = f"tvguard-rules-{datetime.now().strftime('%Y%m%d')}.json"
+        return Response(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            mimetype="application/json",
+            headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+    @app.route("/api/import", methods=["POST"])
+    @auth_required
+    def api_import():
+        data = request.get_json(force=True, silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "不是合法的 JSON 文件"}), 400
+        apps = data.get("rules") if isinstance(data.get("rules"), list) \
+            else data.get("apps")
+        if not isinstance(apps, list):
+            return jsonify({"error": "文件里找不到规则数据（缺少 rules 字段）"}), 400
+        n = store.replace_rules(apps)
+        store.log_event("import", f"导入配置：{n} 条规则覆盖原有规则")
+        return jsonify({"ok": True, "count": n})
 
     @app.route("/api/bonus", methods=["POST"])
     @auth_required
