@@ -39,6 +39,16 @@
   .tag.live { color: var(--ok); border-color: var(--ok); }
   .tag.blocked { color: var(--bad); border-color: var(--bad); }
   .sched { font-size: 12px; color: var(--dim); margin-top: 6px; line-height: 1.7; }
+  .ctl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+  .ctl { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; opacity: .6; }
+  .ctl.active { opacity: 1; }
+  .ctl.lock.active { border-color: var(--bad); background: rgba(224,92,92,.06); }
+  .ctl.pause.active { border-color: var(--warn); background: rgba(240,161,60,.06); }
+  .ctl-title { font-size: 12px; color: var(--dim); margin-bottom: 10px; }
+  .ctl.active .ctl-title { color: var(--text); }
+  .ctl-state { font-size: 12px; margin-top: 10px; min-height: 15px; }
+  .ctl.lock.active .ctl-state { color: var(--bad); }
+  .ctl.pause.active .ctl-state { color: var(--warn); }
   .win-row { border-top: 1px solid var(--line); padding: 10px 0 6px; }
   .win-row:first-child { border-top: 0; }
   .events { font-size: 13px; line-height: 1.9; color: var(--dim); }
@@ -85,17 +95,29 @@
     <div class="row">
       <span class="dot off" id="conn-dot"></span>
       <span id="conn-text">电视未连接</span>
-      <span id="paused-tag" class="tag blocked" style="display:none;"></span>
       <span class="muted" id="fg-text"></span>
     </div>
-    <div class="row" id="pause-ctl">
-      <button class="small" onclick="lockTv(10)" style="background:var(--bad);" title="整机禁看：禁看期间电视上除桌面外任何应用都打不开">禁看10分</button>
-      <button class="small" onclick="lockTv(30)" style="background:var(--bad);" title="整机禁看：禁看期间电视上除桌面外任何应用都打不开">禁看30分</button>
-      <button class="ghost small" onclick="unlockTv()">解除禁看</button>
-      <button class="ghost small" onclick="testBlocker()">测试提示页</button>
-      <button class="ghost small" onclick="pause(15)">暂停15分</button>
-      <button class="ghost small" onclick="pause(60)">暂停1小时</button>
-      <button class="ghost small" onclick="resume()">恢复控制</button>
+    <button class="ghost small" onclick="testBlocker()">测试提示页</button>
+  </div>
+
+  <div class="ctl-grid">
+    <div class="ctl lock" id="ctl-lock">
+      <div class="ctl-title">🚫 禁看 —— 立刻不让看（惩罚/该写作业了）</div>
+      <div class="row">
+        <button class="small" style="background:var(--bad);" onclick="lockTv(10)">禁看 10 分钟</button>
+        <button class="small" style="background:var(--bad);" onclick="lockTv(30)">禁看 30 分钟</button>
+        <button class="small" id="unlock-btn" style="display:none;" onclick="unlockTv()">解除禁看</button>
+      </div>
+      <div class="ctl-state" id="lock-state"></div>
+    </div>
+    <div class="ctl pause" id="ctl-pause">
+      <div class="ctl-title">⏸ 暂停 —— 大人要看，临时放开管控</div>
+      <div class="row">
+        <button class="ghost small" onclick="pause(15)">暂停 15 分钟</button>
+        <button class="ghost small" onclick="pause(60)">暂停 1 小时</button>
+        <button class="small" id="resume-btn" style="display:none;" onclick="resume()">恢复控制</button>
+      </div>
+      <div class="ctl-state" id="pause-state"></div>
     </div>
   </div>
 </div>
@@ -223,23 +245,42 @@ async function refresh() {
     fg += ` <span style="color:var(--dim);font-size:11px;">${st.foreground}</span>`;
   }
   document.getElementById("fg-text").textContent = fg;
-  document.getElementById("pause-ctl").style.opacity = st.paused ? 1 : 0.6;
 
-  // 暂停 / 禁看状态提示
-  const pt = document.getElementById("paused-tag");
+  // 禁看 / 暂停卡片状态：激活高亮 + 倒计时 + 不适用按钮禁用
+  const remain = (untilStr) => {
+    const min = Math.max(0, Math.round((new Date(untilStr) - new Date()) / 60000));
+    return `${new Date(untilStr).toTimeString().slice(0,5)}（约${min}分钟后）`;
+  };
+  const lockCtl = document.getElementById("ctl-lock");
+  const pauseCtl = document.getElementById("ctl-pause");
+  const lockGo = lockCtl.querySelectorAll(".row > button:not(#unlock-btn)");
+  const pauseGo = pauseCtl.querySelectorAll(".row > button:not(#resume-btn)");
+
   if (st.locked && st.lock_until) {
-    const end = new Date(st.lock_until);
-    const min = Math.max(0, Math.round((end - new Date()) / 60000));
-    pt.textContent = `🚫 禁看中，${end.toTimeString().slice(0,5)} 自动解除（约${min}分钟后）`;
-    pt.style.display = "inline-block";
-  } else if (st.paused && st.paused_until) {
-    const end = new Date(st.paused_until);
-    const min = Math.max(0, Math.round((end - new Date()) / 60000));
-    pt.textContent = `⏸ 管控已暂停，${end.toTimeString().slice(0,5)} 自动恢复（约${min}分钟后）`;
-    pt.style.display = "inline-block";
+    lockCtl.classList.add("active");
+    document.getElementById("lock-state").textContent = `禁看中，${remain(st.lock_until)} 自动解除`;
+    document.getElementById("unlock-btn").style.display = "";
+    lockGo.forEach(b => b.disabled = true);
   } else {
-    pt.style.display = "none";
+    lockCtl.classList.remove("active");
+    document.getElementById("lock-state").textContent = "";
+    document.getElementById("unlock-btn").style.display = "none";
+    lockGo.forEach(b => b.disabled = false);
   }
+
+  if (st.paused && st.paused_until) {
+    pauseCtl.classList.add("active");
+    document.getElementById("pause-state").textContent = `管控暂停中，${remain(st.paused_until)} 自动恢复`;
+    document.getElementById("resume-btn").style.display = "";
+    pauseGo.forEach(b => b.disabled = true);
+  } else {
+    pauseCtl.classList.remove("active");
+    document.getElementById("pause-state").textContent = "";
+    document.getElementById("resume-btn").style.display = "none";
+    pauseGo.forEach(b => b.disabled = false);
+  }
+  // 禁看期间暂停无意义（禁看优先），禁用暂停按钮
+  if (st.locked) pauseGo.forEach(b => b.disabled = true);
 
   // 正在看的应用未受管控时，给出一键添加提示
   const sug = document.getElementById("suggest");

@@ -86,10 +86,8 @@ class Monitor(threading.Thread):
         # 待机或回到桌面（识别不到包名）时不计时
         if fg is None or not screen_on:
             return
-        if self.store.is_paused():
-            return
 
-        # 整机禁看：优先级最高，除放行包（桌面/画报/提示页）外一律关闭
+        # 整机禁看：优先级最高（高于暂停），除放行包外一律关闭
         locked, lock_end = self.store.lock_info()
         if locked:
             if fg in self.lock_allow:
@@ -97,6 +95,9 @@ class Monitor(threading.Thread):
             end_str = lock_end.strftime("%H:%M") if lock_end else ""
             self.block(fg, {"name": fg},
                        f"家长设置了现在不能看电视，{end_str} 后再来吧")
+            return
+
+        if self.store.is_paused():
             return
 
         rule = self.store.get_rule(fg)
