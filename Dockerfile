@@ -26,6 +26,8 @@ RUN set -e; \
 
 ENV PATH="/opt/platform-tools:${PATH}"
 
+WORKDIR /app
+
 VOLUME /app/data
 EXPOSE 8787
 
