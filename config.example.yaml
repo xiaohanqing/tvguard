@@ -15,3 +15,10 @@ reset_time: "00:00"
 
 # 应用管控规则不在此文件配置——启动后在 Web 面板里添加和修改，
 # 持久化在 data/rules.json。
+
+# 整机禁看时放行的包（默认已含雷鸟/TCL 桌面与待机画报，一般不用改）
+# tv:
+#   lock_allow:
+#     - com.tcl.cyberui
+#     - com.tcl.appreciate.art
+#     - com.android.systemui

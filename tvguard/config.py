@@ -12,6 +12,9 @@ DEFAULTS = {
         "adb_path": "adb",
         "adb_host": "192.168.1.100",   # 电视 IP，不带端口时默认 5555
         "poll_interval": 5,             # 轮询前台应用的间隔（秒）
+        # 整机禁看时放行的包（桌面/待机画报/系统界面），按需增删
+        "lock_allow": ["com.tcl.cyberui", "com.tcl.appreciate.art",
+                        "com.android.systemui"],
     },
     "server": {
         "host": "0.0.0.0",

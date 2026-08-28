@@ -19,6 +19,10 @@ class Monitor(threading.Thread):
         self.store = store
         self.adb = adb
         self.poll_interval = cfg["tv"]["poll_interval"]
+        # 整机禁看的放行包：配置里的桌面/画报 + 提示页自身 + 系统 UI
+        self.lock_allow = set(cfg["tv"].get("lock_allow") or [])
+        self.lock_allow.add("com.tvguard.blocker")
+        self.lock_allow.add("com.android.systemui")
         self._stop_event = threading.Event()
         self._last_tick = time.time()
         self._last_block_log = {}   # package -> 上次记录拦截事件的时间戳
@@ -85,17 +89,19 @@ class Monitor(threading.Thread):
         if self.store.is_paused():
             return
 
+        # 整机禁看：优先级最高，除放行包（桌面/画报/提示页）外一律关闭
+        locked, lock_end = self.store.lock_info()
+        if locked:
+            if fg in self.lock_allow:
+                return
+            end_str = lock_end.strftime("%H:%M") if lock_end else ""
+            self.block(fg, {"name": fg},
+                       f"家长设置了现在不能看电视，{end_str} 后再来吧")
+            return
+
         rule = self.store.get_rule(fg)
         if rule is None:
             return  # 未纳入管控的应用
-
-        # 禁看中（家长锁定）：优先级最高，额度/时段全部无视
-        locked, lock_end = self.store.lock_info()
-        if locked:
-            end_str = lock_end.strftime("%H:%M") if lock_end else ""
-            self.block(fg, rule,
-                f"家长设置了现在不能看，{end_str} 后再来吧".replace("， ", "，"))
-            return
 
         day = self.store.today_key()
         now_dt = datetime.now()
