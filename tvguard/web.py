@@ -67,7 +67,7 @@ def create_app(cfg: dict, store, adb) -> Flask:
                 })
             apps.append({
                 "package": pkg,
-                "name": rule.get("name", pkg),
+                "name": rule.get("name") or label_for(pkg) or pkg,
                 "banned": rule.get("banned", False),
                 "daily_limit_minutes": limit,
                 "bonus_minutes": bonus,
@@ -251,7 +251,7 @@ def create_app(cfg: dict, store, adb) -> Flask:
             daily_cap = 0
         rule = {
             "package": pkg,
-            "name": (data.get("name") or pkg).strip(),
+            "name": (data.get("name") or label_for(pkg) or pkg).strip(),
             "daily_limit_minutes": daily_cap,
             "windows": windows,
             "banned": bool(data.get("banned", False)),

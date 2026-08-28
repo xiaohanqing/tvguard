@@ -159,6 +159,12 @@
     </div>
   </div>
   <div class="field"><label>显示名称</label><input id="f-name" placeholder="如 云视听极光"></div>
+  <div class="field">
+    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+      <input type="checkbox" id="f-banned" style="width:auto;">
+      完全禁止使用（不分时段，选中后下面的限额/时段全部失效）
+    </label>
+  </div>
   <div class="field"><label>每日总上限（分钟，0 = 不限总时长；所有时段的观看都会计入）</label>
     <input id="f-limit" type="number" min="0" value="0"></div>
   <div class="field">
@@ -371,12 +377,13 @@ function renderApps(st) {
       ? winHtml
       : `<div class="sched">全天允许（未设置时段）</div>`;
 
-    // 被禁止的应用：整卡置灰，只留解除按钮
+    // 被禁止的应用：整卡置灰，保留编辑/解除/移除
     if (a.banned) {
       return `<div class="card" style="opacity:.55;">
         <div class="app-head">
           <span class="app-name">${a.name} ${tag}</span>
           <span class="row">
+            <button class="ghost small" onclick='showForm(${JSON.stringify(a)})'>编辑</button>
             <button class="small" onclick="banApp('${a.package}', false)">解除禁止</button>
             <button class="danger small" onclick="delApp('${a.package}')">移除</button>
           </span>
@@ -479,6 +486,7 @@ function showForm(app) {
   document.getElementById("f-package").disabled = !!app;
   document.getElementById("f-name").value = app ? app.name : "";
   document.getElementById("f-limit").value = app ? app.daily_limit_minutes : 0;
+  document.getElementById("f-banned").checked = app ? !!app.banned : false;
   const box = document.getElementById("f-schedules");
   box.innerHTML = "";
   const wins = app ? (app.windows || []) : [];
@@ -522,6 +530,7 @@ async function saveApp() {
     package: document.getElementById("f-package").value.trim(),
     name: document.getElementById("f-name").value.trim(),
     daily_limit_minutes: parseInt(document.getElementById("f-limit").value) || 0,
+    banned: document.getElementById("f-banned").checked,
     windows,
   };
   if (!body.package) { toast("请填写包名"); return; }

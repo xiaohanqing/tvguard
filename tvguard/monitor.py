@@ -4,7 +4,7 @@ import threading
 import time
 from datetime import datetime
 
-from .adb import AdbError
+from .adb import AdbError, label_for
 from .store import WEEKDAYS
 
 WEEKDAY_CN = {"mon": "一", "tue": "二", "wed": "三", "thu": "四",
@@ -191,7 +191,7 @@ class Monitor(threading.Thread):
         return f"今天的总时长 {cap} 分钟已经用完了（共看 {used} 分钟）"
 
     def block(self, package: str, rule: dict, reason: str):
-        name = rule.get("name", package)
+        name = rule.get("name") or label_for(package) or package
         log.warning("[BLOCK-DBG] 开始拦截 %s (%s)", name, package)
         try:
             self.adb.force_stop(package)

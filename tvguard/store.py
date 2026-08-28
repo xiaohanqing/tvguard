@@ -234,7 +234,9 @@ class Store:
         rule["windows"] = windows
 
     def _normalize_rule(self, rule: dict):
-        rule.setdefault("name", rule["package"])
+        if not rule.get("name") or rule["name"] == rule["package"]:
+            from .adb import label_for
+            rule["name"] = label_for(rule["package"]) or rule["package"]
         rule["daily_limit_minutes"] = max(0, int(rule.get("daily_limit_minutes", 0) or 0))
         rule["banned"] = bool(rule.get("banned", False))
         wins = []
