@@ -98,16 +98,30 @@ class Monitor(threading.Thread):
             self.store.add_usage(day, fg, elapsed)
 
     def block(self, package: str, rule: dict, reason: str):
+        name = rule.get("name", package)
+        log.warning("[BLOCK-DBG] 开始拦截 %s (%s)", name, package)
         try:
             self.adb.force_stop(package)
-            self.adb.go_home()
+            log.warning("[BLOCK-DBG] force-stop 已执行")
         except Exception:
-            log.exception("拦截 %s 失败", package)
+            log.exception("[BLOCK-DBG] force-stop 失败 %s", package)
+        # 先杀应用，稍等再弹提示页：避免 force-stop 引起的任务栈重置冲掉提示页
+        time.sleep(1.2)
+        try:
+            shown = self.adb.show_blocker(name, reason)
+            log.warning("[BLOCK-DBG] show_blocker 返回 %s", shown)
+        except Exception:
+            log.exception("[BLOCK-DBG] 提示页拉起异常 %s", package)
+        # 提示页拉起后立即确认是否真在前台
+        try:
+            fg_after = self.adb.get_foreground()
+            log.warning("[BLOCK-DBG] 拦截后前台 = %s", fg_after)
+        except Exception:
+            log.exception("[BLOCK-DBG] 查前台异常")
 
         # 拦截事件限流：同一应用 60 秒内只记一条，避免刷屏
         now = time.time()
         if now - self._last_block_log.get(package, 0) > 60:
             self._last_block_log[package] = now
-            name = rule.get("name", package)
             self.store.log_event("block", f"已拦截「{name}」：{reason}", package)
             log.info("拦截 %s(%s): %s", name, package, reason)

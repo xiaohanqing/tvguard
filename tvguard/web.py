@@ -164,6 +164,18 @@ def create_app(cfg: dict, store, adb) -> Flask:
                 a["controlled"] = False
         return jsonify({"apps": apps})
 
+    @app.route("/api/test-blocker", methods=["POST"])
+    @auth_required
+    def api_test_blocker():
+        try:
+            ok = adb.show_blocker("测试应用", "这是一次测试拦截（家长触发）")
+        except Exception as e:
+            return jsonify({"error": f"调用失败: {e}"}), 502
+        if not ok:
+            return jsonify({"error": "电视上未安装提示页 APK（tvguard-blocker）"}), 502
+        store.log_event("test", "测试显示拦截提示页")
+        return jsonify({"ok": True})
+
     @app.errorhandler(404)
     def not_found(_):
         return jsonify({"error": "not found"}), 404

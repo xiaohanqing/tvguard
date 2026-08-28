@@ -86,6 +86,7 @@
       <span class="muted" id="fg-text"></span>
     </div>
     <div class="row" id="pause-ctl">
+      <button class="ghost small" onclick="testBlocker()">测试提示页</button>
       <button class="ghost small" onclick="pause(15)">暂停15分</button>
       <button class="ghost small" onclick="pause(60)">暂停1小时</button>
       <button class="ghost small" onclick="resume()">恢复控制</button>
@@ -200,7 +201,8 @@ async function refresh() {
     const app = st.apps.find(a => a.package === st.foreground);
     fg = st.foreground_controlled
       ? `正在看：${app ? app.name : st.foreground}`
-      : `正在看：${st.foreground}（未管控）`;
+      : `正在看：${app && app.name ? app.name : st.foreground}（未管控）`;
+    fg += ` <span style="color:var(--dim);font-size:11px;">${st.foreground}</span>`;
   }
   document.getElementById("fg-text").textContent = fg;
   document.getElementById("pause-ctl").style.opacity = st.paused ? 1 : 0.6;
@@ -260,6 +262,10 @@ function renderApps(st) {
 async function pause(min) {
   await api("/api/pause", {method: "POST", body: JSON.stringify({minutes: min})});
   toast(`已暂停控制 ${min} 分钟`); refresh();
+}
+async function testBlocker() {
+  const r = await api("/api/test-blocker", {method: "POST"});
+  toast(r.ok ? "已在电视上显示提示页（若没看到，检查电视是否亮屏）" : r.error);
 }
 async function resume() {
   await api("/api/resume", {method: "POST"}); toast("已恢复控制"); refresh();

@@ -5,8 +5,11 @@
 - 查询亮屏状态：dumpsys power / dumpsys display
 - 关闭应用：am force-stop；回桌面：input keyevent HOME
 """
+import logging
 import re
 import subprocess
+
+logger = logging.getLogger("tvguard.adb")
 
 # 形如 "mCurrentFocus=Window{... u0 com.pkg/com.pkg.MainActivity}"
 _FOCUS_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)/[a-zA-Z0-9_.$]+")
@@ -62,8 +65,11 @@ class Adb:
 
     def shell(self, command: str, timeout: int = 10) -> str:
         rc, out, err = self._run("shell", command, timeout=timeout)
-        if rc != 0 and "no devices" in (out + err).lower():
-            raise AdbError("设备未连接")
+        blob = (out + err).lower()
+        if rc != 0 or "no devices" in blob or "device offline" in blob \
+                or "not found" in blob or "error:" in blob:
+            # error:xxx / device offline 等都视为连接层失败，交给上层重连
+            raise AdbError(f"adb shell 失败({rc}): {(err or out).strip()[:120]}")
         return out
 
     # ---------- 连接管理 ----------
@@ -87,38 +93,58 @@ class Adb:
     # ---------- 状态查询 ----------
 
     def get_foreground(self):
-        """返回前台应用包名；无法识别时返回 None。"""
+        """返回前台应用包名；无法识别时返回 None。
+
+        不依赖设备端 grep（部分 TV ROM 的 toybox grep 会吞输出/截断行），
+        拉全量 dumpsys 后用 Python 解析；多种来源依次尝试。
+        """
+        outputs = []
         for cmd in (
-            "dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp'",
-            "dumpsys activity activities | grep -E 'ResumedActivity|mResumedActivity'",
+            "dumpsys window windows",
+            "dumpsys activity activities",
         ):
             try:
-                out = self.shell(cmd)
+                out = self.shell(cmd, timeout=15)
             except AdbError:
-                return None
-            m = _FOCUS_RE.search(out)
-            if m:
-                pkg = m.group(1)
-                if pkg in ("android", "com.android.systemui"):
-                    # 系统弹窗/状态栏遮挡时拿不到真实前台，视为未识别
-                    continue
-                return pkg
+                continue
+            if out:
+                outputs.append(out)
+
+        # 优先 mCurrentFocus / mFocusedApp（window dumpsys）
+        for out in outputs:
+            for line in out.splitlines():
+                if "mCurrentFocus" in line or "mFocusedApp" in line:
+                    m = _FOCUS_RE.search(line)
+                    if m:
+                        pkg = m.group(1)
+                        if pkg not in ("android", "com.android.systemui"):
+                            return pkg
+        # 递补：ResumedActivity（activity dumpsys）
+        for out in outputs:
+            for line in out.splitlines():
+                if "ResumedActivity" in line or "mResumedActivity" in line:
+                    m = _FOCUS_RE.search(line)
+                    if m:
+                        pkg = m.group(1)
+                        if pkg not in ("android", "com.android.systemui"):
+                            return pkg
+        # 最后兜底：Launcher 桌面本身不算前台应用，无命中返回 None
         return None
 
     def is_screen_on(self):
         try:
-            out = self.shell("dumpsys power | grep mWakefulness")
+            out = self.shell("dumpsys power", timeout=10)
         except AdbError:
             return False
-        if "Awake" in out:
+        if "mWakefulness=Awake" in out:
             return True
-        if "Asleep" in out or "Dozing" in out:
+        if "mWakefulness=Asleep" in out or "mWakefulness=Dozing" in out:
             return False
         try:
-            out = self.shell("dumpsys display | grep -i mScreenState")
+            out = self.shell("dumpsys display", timeout=10)
         except AdbError:
             return True
-        return "ON" in out.upper()
+        return "mScreenState=ON" in out
 
     def getprop(self, name: str) -> str:
         try:
@@ -164,8 +190,32 @@ class Adb:
 
     # ---------- 控制 ----------
 
+    BLOCKER_PKG = "com.tvguard.blocker"
+
     def force_stop(self, package: str):
         self.shell(f"am force-stop {package}")
 
     def go_home(self):
         self.shell("input keyevent 3")
+
+    def show_blocker(self, app_name: str, reason: str, extra: str = ""):
+        """拉起电视端全屏提示页。失败（未安装等）静默忽略，不影响拦截本身。"""
+        def esc(s):
+            return (s or "").replace("\\", "\\\\").replace('"', '\\"')
+        cmd = (f'am start -n {self.BLOCKER_PKG}/.BlockerActivity -f 0x14000000 '
+               f'--es app "{esc(app_name)}" --es reason "{esc(reason)}" '
+               f'--es extra "{esc(extra)}"')
+        try:
+            out = self.shell(cmd)
+            logger.warning("[BLOCK-DBG] am start 输出: %s", out.strip()[:200])
+            return True
+        except AdbError as e:
+            logger.warning("[BLOCK-DBG] am start 失败: %s", e)
+            return False
+
+    def is_blocker_installed(self) -> bool:
+        try:
+            out = self.shell(f"pm path {self.BLOCKER_PKG}")
+        except AdbError:
+            return False
+        return "package:" in out
