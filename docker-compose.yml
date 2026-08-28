@@ -3,6 +3,8 @@ services:
     build: .
     container_name: tvguard
     restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
     # host 网络模式在 Linux NAS/树莓派上最省事（直连局域网设备）。
     # 不支持 host 网络的环境删掉这行，改用端口映射：
     #   ports: ["8787:8787"]
