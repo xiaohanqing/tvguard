@@ -42,16 +42,18 @@ public class BlockerActivity extends Activity {
         int pad = dp(48);
         root.setPadding(pad, pad, pad, pad);
 
-        TextView emoji = text("⏰", dp(72), Color.WHITE);
+        ClockIcon icon = new ClockIcon(this);
+        LinearLayout.LayoutParams iconLp =
+                new LinearLayout.LayoutParams(dp(72), dp(72));
         TextView title = text(app + " 先休息一下吧", dp(36), Color.WHITE);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setPadding(0, dp(24), 0, 0);
 
         TextView msg = text(reason.isEmpty() ? "今天的观看时间结束啦，明天再见"
-                : reason + "，明天再来哦", dp(24), Color.parseColor("#8A94A8"));
+                : reason, dp(24), Color.parseColor("#8A94A8"));
         msg.setPadding(0, dp(16), 0, 0);
 
-        root.addView(emoji);
+        root.addView(icon, iconLp);
         root.addView(title);
         root.addView(msg);
 
@@ -102,5 +104,46 @@ public class BlockerActivity extends Activity {
 
     private int dp(int v) {
         return Math.round(v * getDensity());
+    }
+
+    private int dp(float v) {
+        return Math.round(v * getDensity());
+    }
+
+    /** 时钟图标：矢量绘制（替代 Emoji，任意分辨率清晰）。 */
+    private class ClockIcon extends android.view.View {
+        ClockIcon(Context ctx) { super(ctx); }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas c) {
+            int w = getWidth(), h = getHeight();
+            float cx = w / 2f, cy = h / 2f;
+            float r = Math.min(w, h) / 2f - dp(3);
+
+            android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+            // 圆环
+            p.setStyle(android.graphics.Paint.Style.STROKE);
+            p.setStrokeWidth(dp(4));
+            p.setShader(new android.graphics.LinearGradient(cx - r, cy - r, cx + r, cy + r,
+                    0xFF6FA8FF, 0xFF3D6FD6, android.graphics.Shader.TileMode.CLAMP));
+            c.drawCircle(cx, cy, r - dp(2), p);
+
+            // 指针（~10:10）
+            p.setShader(null);
+            p.setColor(0xFFD7E4FA);
+            p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            p.setStrokeWidth(dp(3.5f));
+            double hAng = Math.toRadians(-60 - 90), mAng = Math.toRadians(50 - 90);
+            float hr = r * 0.42f, mr = r * 0.62f;
+            c.drawLine(cx, cy, cx + (float) (hr * Math.cos(hAng)), cy + (float) (hr * Math.sin(hAng)), p);
+            p.setStrokeWidth(dp(2.5f));
+            c.drawLine(cx, cy, cx + (float) (mr * Math.cos(mAng)), cy + (float) (mr * Math.sin(mAng)), p);
+
+            // 中心点
+            p.setStyle(android.graphics.Paint.Style.FILL);
+            p.setColor(0xFF6FA8FF);
+            c.drawCircle(cx, cy, dp(3.5f), p);
+        }
     }
 }

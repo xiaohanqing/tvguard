@@ -28,6 +28,7 @@ echo "==> aapt2 编译资源..."
 echo "==> aapt2 链接..."
 "$BT/aapt2.exe" link -o build/app.unaligned.apk \
   -I "$PLATFORM" --manifest AndroidManifest.xml \
+  --min-sdk-version 21 --target-sdk-version 35 \
   --java build/gen build/res.zip
 
 echo "==> javac 编译..."

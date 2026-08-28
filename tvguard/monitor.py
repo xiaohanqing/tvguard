@@ -5,6 +5,10 @@ import time
 from datetime import datetime
 
 from .adb import AdbError
+from .store import WEEKDAYS
+
+WEEKDAY_CN = {"mon": "一", "tue": "二", "wed": "三", "thu": "四",
+              "fri": "五", "sat": "六", "sun": "日"}
 
 log = logging.getLogger("tvguard.monitor")
 
@@ -91,11 +95,30 @@ class Monitor(threading.Thread):
         bonus = self.store.bonus_minutes(day, fg) * 60
 
         if not self.store.in_schedule(rule, datetime.now()):
-            self.block(fg, rule, "不在允许时间段内")
+            self.block(fg, rule, self._reason_schedule(rule))
         elif limit > 0 and usage + elapsed > limit + bonus:
-            self.block(fg, rule, "今日时长已用完")
+            self.block(fg, rule, self._reason_timeout(rule, fg, usage, bonus))
         else:
             self.store.add_usage(day, fg, elapsed)
+
+    def _reason_schedule(self, rule: dict) -> str:
+        """时段外拦截文案：告诉孩子什么时候可以看。"""
+        schedules = rule.get("schedules") or []
+        if not schedules:
+            return "现在不能观看"
+        parts = []
+        for s in schedules:
+            days = "、".join(WEEKDAY_CN.get(d, d) for d in s.get("days", []))
+            parts.append(f"周{days} {s.get('start', '')}–{s.get('end', '')}")
+        return "现在的时段不能看。可以看的时间：" + "；".join(parts)
+
+    def _reason_timeout(self, rule: dict, pkg: str, usage: float, bonus: float) -> str:
+        """超时拦截文案：今天用了多久，限额多少。"""
+        limit = rule.get("daily_limit_minutes", 0)
+        used = int(usage // 60)
+        if bonus > 0:
+            return f"今天的 {limit} 分钟 + 加时 {int(bonus // 60)} 分钟都用完啦（已看 {used} 分钟）"
+        return f"今天的 {limit} 分钟已经用完了（已看 {used} 分钟）"
 
     def block(self, package: str, rule: dict, reason: str):
         name = rule.get("name", package)
